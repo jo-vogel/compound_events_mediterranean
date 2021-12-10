@@ -1,0 +1,626 @@
+---
+title: "Results_mixed"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Main, include=FALSE, fig.height=1, fig.width=1}
+library(tictoc)
+tic('Total')
+tic('Statistics')
+if(!require(ncdf4)) install.packages("ncdf4") # package for netcdf manipulation
+library(raster) # package for raster manipulation
+library(rgdal) # package for geospatial analysis
+library(ggplot2) # package for plotting
+library(berryFunctions)
+library(Kendall)  
+library(cpm) # Cramér-von-Mises test
+library(RVAideMemoire) # Cramér-von-Mises test
+library(rasterVis) # levelplots
+library(dplyr)
+library(data.table)
+library(devtools)
+# install_github('bleutner/RStoolbox') # source: directly von B. Leutner, not from CRAN
+library(RStoolbox)
+library(RColorBrewer)
+```
+
+```{r Renaming, eval=T} 
+# message('renaming output from one workspace, so you can load another workspace with identical names without overwriting the first')
+
+
+# load("D:/user/vogelj/compound_events_mediterran/Code/Workspaces/Main_variables_warm_season_compound_events.RData") # Events for warm season compound events
+# load("D:/user/vogelj/compound_events_mediterran/Code/Workspaces/Main_variables_whole_season_compound_events.RData") # Events for whole season compound events
+
+
+load("D:/user/vogelj/compound_events_mediterran/Code/Workspaces/Main_variables_warm_season_heat_events.RData") # Events for warm season heat waves
+# Warm season SPI
+event_wsh <- event
+events_per_time_wsh <- events_per_time
+event_series_wsh <- event_series
+
+month_lengths_wsh <- month_lengths
+end_dates_month_wsh <- cumsum(month_lengths_wsh) # last day of each month
+vecyears_wsh <- seq(1,(40*184+184),184) # Vector for the summer period of 40 years
+# months_40years <- rep(c("05_May","06_Jun","07_Jul","08_Aug","09_Sep","10_Oct"),40)
+# start_dates_month <- c(1,end_dates_month[1:239]+1) # first day of each month
+# month_vect <- vector(mode='character',length=7360)
+# end_dates_year <- cumsum(rep(184,40)[1:years])
+# year_vect <- vector(mode='character',length=7360)
+# for (i in 1:240) {month_vect[start_dates_month[i]:end_dates_month[i]] <- months_40years[i]}
+# plotwindow <- c(2,3)
+
+
+load("D:/user/vogelj/compound_events_mediterran/Code/Workspaces/Main_variables_whole_season_heat_events.RData") # Events for whole season heat waves
+# Warm season SPI
+event_h <- event
+events_per_time_h <- events_per_time
+event_series_h <- event_series
+
+month_lengths_h <- month_lengths
+end_dates_month_h <- cumsum(month_lengths_h) # last day of each month
+year_lengths_h <- rep(c(365,366,365,365),10)
+vecyears_h <- c(1,cumsum(year_lengths_h)+1) # Vector for the whole period of 40 years
+# months_40years <- rep(c("01_Jan","02_Feb","03_Mar","04_Apr","05_May","06_Jun","07_Jul","08_Aug","09_Sep","10_Oct","11_Nov","12_Dec"),40)
+# start_dates_month <- c(1,end_dates_month[1:479]+1) # first day of each month
+# month_vect <- vector(mode='character',length=14610)
+# end_dates_year <- cumsum(rep(c(365,366,365,365),10)[1:years])
+# year_vect <- vector(mode='character',length=14610)
+# for (i in 1:480) {month_vect[start_dates_month[i]:end_dates_month[i]] <- months_40years[i]}
+# plotwindow <- c(3,4)
+
+
+load("D:/user/vogelj/compound_events_mediterran/Code/Workspaces/Main_variables_warm_season_drought_events.RData") # Events for whole season droughts
+# year_lengths <- rep(c(365,366,365,365),10)
+# vecyears <- c(1,cumsum(year_lengths)+1) # Vector for the whole period of 40 years
+
+# Warm season SPI
+event_wsd <- event
+events_per_time_wsd <- events_per_time
+event_series_wsd <- event_series
+
+# Warm season SPEI
+event_bwsd <- event_b
+events_per_time_bwsd <- events_per_time_b
+event_series_bwsd <- event_series_b
+
+month_lengths_wsd <- month_lengths
+vecyears_wsd <- seq(1,(40*6+6),6) # Vector for the summer period of 40 years
+
+load("D:/user/vogelj/compound_events_mediterran/Code/Workspaces/Main_variables_whole_season_drought_events.RData") # Events for warm season droughts
+# Warm season SPI
+event_d <- event
+events_per_time_d <- events_per_time
+event_series_d <- event_series
+
+# Warm season SPEI
+event_bd <- event_b
+events_per_time_bd <- events_per_time_b
+event_series_bd <- event_series_b
+
+month_lengths_d <- month_lengths
+vecyears_d <- seq(1,(40*12+12),12) # Vector for the summer period of 40 years
+
+
+ocean <- readOGR('D:/user/vogelj/Data/ne_10m_ocean/ne_10m_ocean.shp') # Fuers Entfernen der Meeresfl?chen
+border <- readOGR('D:/user/vogelj/Data/ne_50m_admin_0_countries/ne_50m_admin_0_countries.shp')	
+end_dates_month <- cumsum(month_lengths) # last day of each month
+```
+
+```{r Processing, eval=T} 
+fraction_wsh <- ((event_wsh[,2,2,2]-event_wsh[,2,2,1])/(event_wsh[,2,2,2]+event_wsh[,2,2,1]))*100 # Percentage change 
+fraction_h <- ((event_h[,2,2,2]-event_h[,2,2,1])/(event_h[,2,2,2]+event_h[,2,2,1]))*100 # Percentage change 
+fraction_wsd <- ((event_wsd[,2]-event_wsd[,1])/(event_wsd[,2]+event_wsd[,1]))*100 # Percentage change 
+fraction_d <- ((event_d[,2]-event_d[,1])/(event_d[,2]+event_d[,1]))*100 # Percentage change 
+fraction_bwsd <- ((event_bwsd[,2]-event_bwsd[,1])/(event_bwsd[,2]+event_bwsd[,1]))*100 # Percentage change 
+fraction_bd <- ((event_bd[,2]-event_bd[,1])/(event_bd[,2]+event_bd[,1]))*100 # Percentage change 
+datfraction  <- cbind(fraction_wsh, fraction_h,fraction_wsd,fraction_d,fraction_bwsd,fraction_bd)
+datfraction <- lapply(1:6, function (x) {cbind(coord,datfraction[,x])})
+datras_fraction <- lapply(datfraction,rasterFromXYZ)
+med_extent <- c(-9.625,40.125,30.375,45.125)
+datras_fraction <- lapply(datras_fraction,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+datras_fraction <- lapply(datras_fraction,function(x){crop(x,med_extent)})
+brick_fraction <- brick(datras_fraction)
+stack_fraction <- stack(datras_fraction)
+```
+
+```{r Spatial plots, eval=T} 
+thenames <- c('Warm season warm spells','Deseasonalised warm spells','Warm season SPI-3 droughts','Deseasonalised SPI-3 droughts','Warm season SPEI-3 droughts','Deseasonalised SPEI-3 droughts')
+myTheme <- rasterTheme(region = c( "#6371AF", "#959CC3","#E2E6BD" ,"#E5D961" , "#E9B62D" ,"#EAA428" # blue to yellow to red
+                                  ,"#E89132"  ,"#E06B50" ,"#D33F6A"))
+# myTheme <-  PuOrTheme(region = rev(brewer.pal(11, 'PuOr'))) # theme used for EGU
+mymax <- 100
+mymin <- -100
+upper <- round(mymax/(mymax-mymin)*200)
+lower <- 200-upper
+myThemelow <- colorRampPalette(c(viridis::viridis(9, direction = 1)[1:4], "cadetblue3", "white"))(lower)
+myThemeup <- colorRampPalette(c("white","gold2", "orangered3", "orangered4"))(upper)
+myTheme <- rasterTheme(region=c(myThemelow,myThemeup))
+myTheme$panel.background$col = 'gray97' # NA values
+p.strip <- list(cex=0.5, lines=1, font=2) # subplot titles
+my.at <- seq(-100,100,25)
+my.at2 <- seq(-100,100,5)
+my.labels <- paste0(seq(-100,100,25),'%')
+myColorkey <- list(at=my.at2, ## where the colors change
+                   labels=list(
+                     labels=my.labels, # label names
+                     at=my.at, ## where to print labels
+                     cex=0.6, font=2),
+                   height=0.85, width=1.4#,
+                   )
+
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/Maps_heatwaves_droughts.png",height=6,width=12,unit="cm",
+    pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+par(oma=c(1,0,0,0),mar=c(2,1,0,1))
+levelplot(stack_fraction,between=list(x=0.5,y=0.5),par.settings=myTheme,names.attr=thenames,
+          par.strip.text=p.strip,
+          scales=list(draw=FALSE),
+          at=my.at2, colorkey=myColorkey, fontface=2, asp=1)+
+  layer(sp.polygons(border,col='black',lwd=0.5))+
+  # layer(sp.polygons(ocean,fill='lightblue',col='black')
+  layer(sp.polygons(ocean,fill='cornflowerblue',col='black',lwd=0.5)
+  ) #  pixel overlapping into the sea are covered
+dev.off()
+```
+
+``` {r Change vector analysis, eval=T}
+dat_1stperiod <- cbind(coord,event_wsh[,2,2,1],event_h[,2,2,1],event_wsd[,1],event_d[,1],event_bwsd[,1],event_d[,1])
+dat_2ndperiod <- cbind(coord,event_wsh[,2,2,2],event_h[,2,2,2],event_wsd[,2],event_d[,2],event_bwsd[,2],event_d[,2])
+datras_1stperiod <- lapply(1:6, function(x) {rasterFromXYZ(cbind(dat_1stperiod[,1],dat_1stperiod[,2],dat_1stperiod[,x+2]))})
+datras_2ndperiod <- lapply(1:6, function(x) {rasterFromXYZ(cbind(dat_2ndperiod[,1],dat_2ndperiod[,2],dat_2ndperiod[,x+2]))})
+datras_1stperiod <- lapply(datras_1stperiod,function(x){crop(x,med_extent)})
+datras_2ndperiod <- lapply(datras_2ndperiod,function(x){crop(x,med_extent)})
+brick_1stperiod_wsh_wsd <- brick(datras_1stperiod[[1]],datras_1stperiod[[3]])
+brick_2ndperiod_wsh_wsd <- brick(datras_2ndperiod[[1]],datras_2ndperiod[[3]])
+# # brick_1stperiod_d_h <- brick(datras_1stperiod[[3]],datras_1stperiod[[1]])
+# # brick_2ndperiod_d_h <- brick(datras_2ndperiod[[3]],datras_2ndperiod[[1]])
+# brick_1stperiod_wsh_bwsd <- brick(datras_1stperiod[[1]],datras_1stperiod[[5]])
+# brick_2ndperiod_wsh_bwsd <- brick(datras_2ndperiod[[1]],datras_2ndperiod[[5]])
+brick_1stperiod_h_d <- brick(datras_1stperiod[[2]],datras_1stperiod[[4]])
+brick_2ndperiod_h_d <- brick(datras_2ndperiod[[2]],datras_2ndperiod[[4]])
+# brick_1stperiod_h_bd <- brick(datras_1stperiod[[2]],datras_1stperiod[[6]])
+# brick_2ndperiod_h_bd <- brick(datras_2ndperiod[[2]],datras_2ndperiod[[6]])
+
+brick_1stperiod_wsh_wsd_norm <- brick(datras_1stperiod[[1]]/datras_1stperiod[[1]],datras_1stperiod[[3]]/datras_1stperiod[[3]])
+brick_2ndperiod_wsh_wsd_norm <- brick(datras_2ndperiod[[1]]/datras_1stperiod[[1]],datras_2ndperiod[[3]]/datras_1stperiod[[3]])
+brick_1stperiod_h_d_norm <- brick(datras_1stperiod[[2]]/datras_1stperiod[[2]],datras_1stperiod[[4]]/datras_1stperiod[[4]])
+brick_2ndperiod_h_d_norm <- brick(datras_2ndperiod[[2]]/datras_1stperiod[[2]],datras_2ndperiod[[4]]/datras_1stperiod[[4]])
+
+Koeppen <- crop(Koeppen,med_extent)
+# ocean2 <- crop(ocean, c(-9.625, 40.125, 25, 50))
+cva_wsh_wsd_norm <- rasterCVA(brick_1stperiod_wsh_wsd_norm,brick_2ndperiod_wsh_wsd_norm)
+# cva_wsh_wsd <- rasterCVA(brick_1stperiod_wsh_wsd,brick_2ndperiod_wsh_wsd)
+cva_wsh_wsd_norm <- mask(cva_wsh_wsd_norm,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)
+# # cva_inv <- rasterCVA(brick_1stperiod_d_h,brick_2ndperiod_d_h)
+# # cva_inv <- mask(cva_inv,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)
+# cva_wsh_bwsd <- rasterCVA(brick_1stperiod_wsh_bwsd,brick_2ndperiod_wsh_bwsd)
+# cva_wsh_bwsd <- mask(cva_wsh_bwsd,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)
+cva_h_d_norm <- rasterCVA(brick_1stperiod_h_d_norm,brick_2ndperiod_h_d_norm)
+# cva_h_d <- rasterCVA(brick_1stperiod_h_d,brick_2ndperiod_h_d)
+cva_h_d_norm <- mask(cva_h_d_norm,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)
+# cva_h_bd <- rasterCVA(brick_1stperiod_h_bd,brick_2ndperiod_h_bd)
+# cva_h_bd <- mask(cva_h_bd,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)
+
+
+# plot(cva);plot(border,col='transparent', border='black',add=TRUE)
+cuts=c(seq(0,360,20)) #set breaks
+cuts2 <- c(0,(seq(0,360,length.out=9)+22.5)) 
+# cuts2 [10] <- cuts2[10]-360
+cuts2 [10] <- 360
+colors2 <- c(rainbow(8),rainbow(1)) # same color at start and end
+colors <- rainbow(30)
+colors2[4] <-colors[10] # make coloring nicer
+colors2[3] <-colors[6] # make coloring nicer
+colors2 <- colors2[c(4:8,1:3,4)] # shift colors (note: first and last color are the same)
+# colors2: green, cyan, blue, purple, rose, red, orange, yellow
+colors2 <- c("green","cyan","blue","purple","pink","red","orange","yellow","green")
+# colors2 <- colors2[c(2:8,1,2)] 
+# colors <- topo.colors(20)
+# pal <- colorRampPalette(c("white","black"))
+
+yellow <- brewer.pal(8,"Accent")[4]
+orange <- brewer.pal(8,"Accent")[3]
+blue <- brewer.pal(8,"Accent")[5]
+rose <- brewer.pal(8,"Accent")[6]
+green <- brewer.pal(8,"Accent")[1]
+cyan <- "cadetblue2"
+cols <- inlmisc::GetColors(n = 10,scheme = "smooth rainbow")
+red <- cols[9]
+purple <- cols[3]
+
+colors2[8] <- yellow
+colors2[7] <- orange
+colors2[5] <- rose
+colors2[3] <- blue
+colors2[1] <- green;colors2[9] <- green
+colors2[2] <- cyan
+colors2[6] <- red
+colors2[4] <- purple
+
+# png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/CVA_norm_heatwaves_droughts_SPI.png",height=8,width=13,unit="cm",
+#     pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/CVA_norm_heatwaves_droughts_SPI.png",height=8,width=15.1,unit="cm",
+    pointsize = 6, res = 1200)
+# pdf(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/CVA_norm_heatwaves_droughts_SPI.pdf",height=8/2.54,width=15.1/2.54, pointsize = 6)
+par(mfrow=c(2,2),mar=c(1, 4, 3, 3) + 0.1, oma=c(0,0,0,8))
+plot(cva_wsh_wsd_norm$angle,main="Angle (Warm season compound events)",breaks=cuts2, col = colors2,legend=F,zlim=c(0,360),axes=F);plot(border,col='transparent', border='black',add=TRUE,lwd=0.4);plot(ocean,col='lightblue',add=T,lwd=0.4)
+plot(cva_wsh_wsd_norm$angle, legend.only=TRUE, col=colors2,zlim=c(0,360),
+     legend.width=1, legend.shrink=0.95, axis.args=list(at=cuts2, labels=cuts2,cex.axis=1.1, font=2)
+#    ,legend.args=list(text='Angle', side=4, font=2, line=2.5, cex=0.8,las=3)
+)
+mtext("Degrees", side=4, font=2, line=4.5)
+plot(cva_wsh_wsd_norm$magnitude,main="Magnitude (Warm season compound events)",axes=F,zlim=c(0,10),legend=F);plot(border,col='transparent', border='black',add=TRUE,lwd=0.4);plot(ocean,col='lightblue',add=TRUE,lwd=0.4)
+plot(cva_wsh_wsd_norm$magnitude, legend.only=TRUE, zlim=c(0,10),
+     legend.width=1, legend.shrink=0.95, axis.args=list(at=seq(0,10,2.5), labels=c("0","2.5","5","7.5",">=10"),cex.axis=1.1, font=2)
+)
+mtext("Euclidean distance", side=4, font=2, line=3.5)
+plot(cva_h_d_norm$angle,main="Angle (Deseasonalised compound events)",breaks=cuts2, col = colors2,legend=F,zlim=c(0,360),axes=F);plot(border,col='transparent', border='black',add=TRUE,lwd=0.4);plot(ocean,col='lightblue',add=TRUE,lwd=0.4)
+plot(cva_h_d_norm$angle, legend.only=TRUE, col=colors2,zlim=c(0,360),
+     legend.width=1, legend.shrink=0.95, axis.args=list(at=cuts2, labels=cuts2,cex.axis=1.1, font=2)
+)
+mtext("Degrees", side=4, font=2, line=4.5)
+plot(cva_h_d_norm$magnitude,main="Magnitude (Deseasonalised compound events)",axes=F,zlim=c(0,7),legend=F);plot(border,col='transparent', border='black',add=TRUE,lwd=0.4);plot(ocean,col='lightblue',add=TRUE,lwd=0.4)
+plot(cva_h_d_norm$magnitude, legend.only=TRUE, zlim=c(0,7),
+     legend.width=1, legend.shrink=0.95, axis.args=list(cex.axis=1.1, font=2)
+)
+mtext("Euclidean distance", side=4, font=2, line=3.5)
+dev.off()
+
+
+
+# png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/CVA_heatwaves_droughts_SPEI.png",height=8,width=10,unit="cm",
+#     pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+# par(mfrow=c(2,2))
+# plot(cva_wsh_bwsd$angle,main="Angle",breaks=cuts, col = colors);plot(border,col='transparent', border='black',add=TRUE)
+# plot(cva_wsh_bwsd$magnitude,main="Magnitude");plot(border,col='transparent', border='black',add=TRUE)
+# plot(cva_h_bd$angle,main="Angle",breaks=cuts, col = colors);plot(border,col='transparent', border='black',add=TRUE)
+# plot(cva_h_bd$magnitude,main="Magnitude");plot(border,col='transparent', border='black',add=TRUE)
+# dev.off()
+
+# levelplot unsuitable because of very different z-axes
+# levelplot(cva, par.settings=myTheme)+
+#   layer(sp.polygons(border,col='white',lwd=0.5))+
+#   layer(sp.polygons(ocean,fill='cornflowerblue',col='black',lwd=0.5))
+
+
+# ggplot ####
+# library(maps)
+# world <- map_data("world")
+# ggplot(data = cva_wsh_wsd_norm$angle, aes(x=coord[,1], y=coord[,2])) +
+#   geom_polygon(data = world, aes(long, lat, group=group), fill="white", color="black", size=0.3) +
+#   geom_polygon(data= ocean, aes(long,lat,group=group), fill="lightblue",color="black")+
+#   geom_point(shape=15, aes(color=cva_wsh_wsd_norm$angle@data@values),size=0.7) +
+#   # scale_color_manual(values = c("0"=rainbow(4)[1],"1"=rainbow(4)[2], "2"=rainbow(4)[3], "3"=rainbow(4)[4])) +
+#   scale_color_gradientn(limits=c(0,360), colours=colors2 ,values=rescale(seq(0,360,22.5)), na.value="white") +
+#   theme(panel.ontop = F, panel.grid = element_blank(), panel.border = element_rect(colour = "black", fill = NA),
+#         axis.text = element_text(size = 15), axis.title = element_text(size = 15))+
+#   ylab("Lat (°N)") +
+#   xlab("Lon (°E)") +
+#   coord_fixed(xlim = c(med_extent[1], med_extent[2]),
+#               ylim = c(med_extent[3], med_extent[4]),
+#               ratio = 1.3)+
+#   labs(color="Angle [°]",
+#        title = "",
+#        subtitle = "")+
+#        theme(plot.title = element_text(size = 20), plot.subtitle = element_text(size = 15),
+#              legend.title = element_text(size = 15), legend.text = element_text(size = 14)) +
+#   X11(width = 20, height = 7)
+# ggsave(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/cva_test.png")
+
+
+
+# Angle calculations
+library(NISTunits)
+
+angle <- function(M,N){
+  the_angle <- atan2(N[2],N[1]) - atan2(M[2],M[1]) 
+  ifelse(the_angle<0,the_angle+2*pi,the_angle)
+}
+
+# Testing the function ####
+###########################
+
+orig <- c(0,1) # Winkel zur y-Achse
+theta <- c(0,0.5*pi,pi,1.5*pi,2*pi)
+theta <- seq(0,2*pi,length.out=100) # 0 bis 360°
+# test <-  sapply(theta, function(theta) angle3(M=c(sin(theta),cos(theta)),N=orig)) # N geht im Uhrzeigersinn, von der oberen y-Achse aus
+# plot(NISTradianTOdeg(test))
+
+
+# Calculating the angle ####
+############################
+cva_wsh_wsd_norm_rad <- NISTdegTOradian(cva_wsh_wsd_norm$angle@data@values)
+north_wsh_wsd <- cos(cva_wsh_wsd_norm_rad )
+east_wsh_wsd <- sin(cva_wsh_wsd_norm_rad )
+
+mean(north_wsh_wsd,na.rm=T)
+mean(east_wsh_wsd,na.rm=T)
+
+
+cva_h_d_norm_rad <- NISTdegTOradian(cva_h_d_norm$angle@data@values)
+north_h_d <- cos(cva_h_d_norm_rad )
+east_h_d <- sin(cva_h_d_norm_rad )
+
+mean(north_h_d,na.rm=T)
+mean(east_h_d,na.rm=T)
+
+
+angle_wsh_wsd <-  angle(M=c(mean(east_wsh_wsd,na.rm=T),mean(north_wsh_wsd,na.rm=T)),N=orig)
+angle_h_d <-  angle(M=c(mean(east_h_d,na.rm=T),mean(north_h_d,na.rm=T)),N=orig)
+NISTradianTOdeg(angle_wsh_wsd)
+NISTradianTOdeg(angle_h_d)
+
+
+# Other tries to calculate angle ####
+###################################
+
+# library(matlib)
+# angle(x, y, degree = F)
+# angle(x, y, degree = T)
+
+# ys <- c(seq(0,1,0.1),seq(1,0,-0.1),seq(0,-1,-0.1),seq(-1,0,0.1))
+# xs <- c(seq(1,0,-0.1),seq(0,-1,-0.1),seq(-1,0,0.1),seq(0,1,0.1))
+# result <- atan2(ys,xs)/pi
+# result_mod <- ifelse(result<0,result+2,result)
+
+# angles <- function(x,y){
+#   dot.prod <- x%*%y 
+#   norm.x <- norm(x,type="2")
+#   norm.y <- norm(y,type="2")
+#   theta <- acos(dot.prod / (norm.x * norm.y))
+#   as.numeric(theta)
+# }
+# angles(xs,ys)
+
+# angle1 <- function(M,N){
+#   acos( sum(M*N) / ( sqrt(sum(M*M)) * sqrt(sum(N*N)) ) )
+# }
+# angle2 <- function(M,N){
+#   atan2(N[2],N[1]) - atan2(M[2],M[1]) 
+# }
+
+
+# Analysis per country ####
+###########################
+
+# find all Mediterreanean countries automatically 
+border_med <- crop(border,med_extent)
+Koeppen_med <- mask(Koeppen,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)
+
+# attribute each pixel to a country
+countries <- vector("list",length=length(border_med@data$SOVEREIGNT))
+Koeppen_mask <- vector("list",length=length(border_med@data$SOVEREIGNT))
+for (i in 1:length(border_med@data$SOVEREIGNT)){
+  countries[[i]] <- subset(x=border, subset=border@data[["SOVEREIGNT"]] == border_med@data$SOVEREIGNT[i])
+  Koeppen_mask[[i]] <- crop(Koeppen_med,countries[[i]]) # cropping not necessary, but visually helpful
+  Koeppen_mask[[i]] <- mask(Koeppen_mask[[i]],countries[[i]])
+}
+
+# exclude countries without data
+countries_excl <- sapply(1:length(border_med@data$SOVEREIGNT),function(x) all(is.na(Koeppen_mask[[x]]@data@values)))
+med_countries <- border_med@data$SOVEREIGNT[!countries_excl] # list of Mediterranean countries with data
+med_countries <- med_countries[-13] # remove Israel once (it's included twice); name it "Israel and Palestinian territories
+Cyprus <- aggregate(rbind(countries[[29]],countries[[30]])) # merge northern and southern cyprus
+med_countries <- med_countries[-16] # exclude nothern Cyprus
+countries_red <- sapply(1:length(med_countries),function(x) subset(x=border, subset=border@data[["SOVEREIGNT"]] == med_countries[x]))
+countries_red[[16]] <- Cyprus # replace southern Cyprus with joint Cyprus
+Koeppen_mask_red <- Koeppen_mask[!countries_excl]
+Koeppen_mask_red <- Koeppen_mask_red[-13]
+Cyprus_ras <- merge(Koeppen_mask[[29]],Koeppen_mask[[30]]) # merge northern and southern cyprus
+Koeppen_mask_red <- Koeppen_mask_red[-16]
+Koeppen_mask_red[[16]] <- Cyprus_ras
+
+# make country-wise subsets of the raster file
+angles <- vector("list",length=length(countries_red))
+angles_mask <- vector("list",length=length(countries_red))
+for (i in 1:length(countries_red)){
+  angles[[i]] <- crop(cva_wsh_wsd_norm$angle,countries_red[[i]])
+  angles_mask[[i]] <- mask(angles[[i]],countries_red[[i]])
+}
+# Plot all countries
+sapply(1:length(countries_red),function(x) {plot(angles_mask[[x]],main=med_countries[x],breaks=cuts2, col = colors2,legend=T,zlim=c(0,360),axes=F);plot(countries_red[[x]],add=T)})
+
+# Calculate mean for each country-wise subset
+mean_angle <- sapply(1:length(med_countries),function(x) cellStats(angles_mask[[x]],'mean'))
+angle_country_df <- data.frame('Data'=mean_angle,'Country'=med_countries)
+angle_country_df <- angle_country_df[order(angle_country_df$Data),]
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/Mean_angle_country.png", height=8, width=10, unit="cm", pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+par(mar=c(5,8,4,2))
+barplot(angle_country_df[,1], names.arg=angle_country_df[,2], horiz=T, width=rep(6,36), ylim=c(0,230), las=2, col="lightblue", space=0.1, cex.names=0.7, xlab="Angle of change vector analysis")
+dev.off()
+# The problem with this plot is, that it doesn't account for the magnitude. It seems hard to account for magnitude. The main problem is to account for pixels with little change. There is no angle for staying constant.
+
+
+```
+
+```{r Barplots, eval=T} 
+# message('Elements of barplot have different lengths. Teile sie daher entsprechend auf die 6 Fenster auf (links warm season, rechts whole season')
+
+area_size <- length(which(Koeppen@data@values==1))
+allyears <- 1979:2018
+
+# for warm season heat wave:
+vecyears <- seq(1,(40*184+184),184) # Vector for the summer period of 40 years
+months_40years_wsh <- rep(c("05_May","06_Jun","07_Jul","08_Aug","09_Sep","10_Oct"),40)
+start_dates_month <- c(1,end_dates_month_wsh[1:239]+1) # first day of each month
+month_vect_wsh <- vector(mode='character',length=7360)
+end_dates_year <- cumsum(rep(184,40)[1:years])
+year_vect_wsh <- vector(mode='character',length=7360)
+for (i in 1:240) {month_vect_wsh[start_dates_month[i]:end_dates_month_wsh[i]] <- months_40years_wsh[i]}
+plotwindow <- c(2,3)
+start_dates_year <- c(1,end_dates_year[1:39]+1)
+for (i in 1:40) {year_vect_wsh[start_dates_year[i]:end_dates_year[i]] <- allyears[i]}
+
+# for whole season heat wave:
+year_lengths <- rep(c(365,366,365,365),10)
+vecyears <- c(1,cumsum(year_lengths)+1) # Vector for the whole period of 40 years
+months_40years_h <- rep(c("01_Jan","02_Feb","03_Mar","04_Apr","05_May","06_Jun","07_Jul","08_Aug","09_Sep","10_Oct","11_Nov","12_Dec"),40)
+start_dates_month <- c(1,end_dates_month_h[1:479]+1) # first day of each month
+month_vect_h <- vector(mode='character',length=14610)
+end_dates_year <- cumsum(rep(c(365,366,365,365),10)[1:years])
+year_vect_h <- vector(mode='character',length=14610)
+for (i in 1:480) {month_vect_h[start_dates_month[i]:end_dates_month_h[i]] <- months_40years_h[i]}
+plotwindow <- c(3,4)
+start_dates_year <- c(1,end_dates_year[1:39]+1)
+for (i in 1:40) {year_vect_h[start_dates_year[i]:end_dates_year[i]] <- allyears[i]}
+
+
+# for warm season drought:
+months_40years_wsd <- rep(c("05_May","06_Jun","07_Jul","08_Aug","09_Sep","10_Oct"),40)
+month_names_ws <- unique(months_40years_wsd)
+month_vect_wsd <- months_40years_wsd
+year_vect_wsd <- rep(c(1979:2018),each=6)
+
+# for whole season drought:
+months_40years_d <- rep(c("01_Jan","02_Feb","03_Mar","04_Apr","05_May","06_Jun","07_Jul","08_Aug","09_Sep","10_Oct","11_Nov","12_Dec"),40)
+month_names <- unique(months_40years_d)
+month_vect_d <- months_40years_d
+year_vect_d <- rep(c(1979:2018),each=12)
+
+all_month_vect <- list(month_vect_wsh,month_vect_h,month_vect_wsd,month_vect_d,month_vect_wsd,month_vect_d)
+all_year_vect <- list(year_vect_wsh,year_vect_h,year_vect_wsd,year_vect_d,year_vect_wsd,year_vect_d)
+
+all_events <- list(events_per_time_wsh[,2,2],events_per_time_h[,2,2],events_per_time_wsd,events_per_time_d,events_per_time_bwsd,events_per_time_bd)
+events_and_dates <- lapply(1:6,function(x){data.frame('Data'= all_events[[x]],'Month' = all_month_vect[[x]],'Year'= all_year_vect[[x]])})
+
+all_slopes <- vector(mode='list',length=6)
+for (j in 1:6){
+  monthly_slopes <- vector(mode="numeric",length=length(unique(all_month_vect[[j]])))
+  for (i in c(1:length(unique(all_month_vect[[j]])))){
+    curr_month <- filter(events_and_dates[[j]], Month == unique(all_month_vect[[j]])[i])
+    sum_curr_month <- tapply(curr_month$Data,curr_month$Year,sum)/area_size
+    lm_curr_month <- lm(sum_curr_month~c(1979:2018))
+    monthly_slopes[i] <- lm_curr_month$coefficients[2]
+  }
+  all_slopes[[j]] <- monthly_slopes
+}
+
+all_months_plot <- rep(list(c("May","Jun","Jul","Aug","Sep","Oct"),c("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")),3)
+titles <- c("Warm season warm spells","Deseasonalised warm spells","Warm season SPI-3 droughts","Deseasonalised SPI-3 droughts","Warm season SPEI-3 droughts","Deseasonalised SPEI-3 droughts")
+colors <- c("SaddleBrown","ForestGreen","SaddleBrown","ForestGreen","SaddleBrown","ForestGreen")
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/Monthly_change_over_time_heatwaves_droughts.png",height=8,width=10,unit="cm",
+    pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+par(mfrow=c(3,2),mar=c(5, 5, 4, 2) + 0.1)
+a <- lapply(1:6, function(x){
+  # barplot(all_slopes[[x]]*years,xlab="Months",ylab="Change of number of events per pixel \n from 1979 to 2018 for each month",names=unique(all_month_vect[[x]]),col="lightblue",main=titles[x]) # Slope over the 40 years for each month
+   barplot(all_slopes[[x]]*years,xlab="Months",ylab="Change in number of \n events from 1979 - 2018",names=all_months_plot[[x]],col=colors[x],main=titles[x], las=1) # Slope over the 40 years for each month
+})
+dev.off()
+save(all_slopes,file = "D:/user/vogelj/compound_events_mediterran/Output/all_slopes_monthly_heat_waves_droughts.RData")
+```
+
+
+```{r Temporal increase, eval=T} 
+events_per_time2_wsh <- array(events_per_time_wsh,dim=c(dim(events_per_time_wsh)[1],9))# dim: pixels, heat wave cases
+events_per_pixel_wsh <- sapply(1:9,function(y){sapply(1:years, function (x) {sum(events_per_time2_wsh[(vecyears_wsh[x]:(vecyears_wsh[x+1]-1)),y])/area_size})}) # total yearly sum 
+events_per_time2_h <- array(events_per_time_h,dim=c(dim(events_per_time_h)[1],9))# dim: pixels, heat wave cases
+events_per_pixel_h <- sapply(1:9,function(y){sapply(1:years, function (x) {sum(events_per_time2_h[(vecyears_h[x]:(vecyears_h[x+1]-1)),y])/area_size})}) # total yearly sum 
+
+events_per_time2_wsd <- array(events_per_time_wsd,dim=c(dim(events_per_time_wsd)[1]))# dim: pixels
+events_per_pixel_wsd <- sapply(1:years, function (x) {sum(events_per_time2_wsd[(vecyears_wsd[x]:(vecyears_wsd[x+1]-1))])/area_size}) # total yearly sum of area under compound 
+events_per_time2_bwsd <- array(events_per_time_bwsd,dim=c(dim(events_per_time_bwsd)[1]))# dim: pixels
+events_per_pixel_bwsd <- sapply(1:years, function (x) {sum(events_per_time2_bwsd[(vecyears_wsd[x]:(vecyears_wsd[x+1]-1))])/area_size}) # total yearly sum of area under compound 
+events_per_time2_d <- array(events_per_time_d,dim=c(dim(events_per_time_d)[1]))# dim: pixels
+events_per_pixel_d <- sapply(1:years, function (x) {sum(events_per_time2_d[(vecyears_d[x]:(vecyears_d[x+1]-1))])/area_size}) # total yearly sum of area under compound 
+events_per_time2_bd <- array(events_per_time_bd,dim=c(dim(events_per_time_bd)[1]))# dim: pixels
+events_per_pixel_bd <- sapply(1:years, function (x) {sum(events_per_time2_bd[(vecyears_d[x]:(vecyears_d[x+1]-1))])/area_size}) # total yearly sum of area under compound 
+
+lm_wsh <- lm(events_per_pixel_wsh[,5]~c(1:40))
+slopes_wsh <- lm_wsh$coefficients[2]
+slopes_wsh*40
+lm_h <- lm(events_per_pixel_h[,5]~c(1:40))
+slopes_h <- lm_h$coefficients[2]
+slopes_h*40
+
+lm_wsd <- lm(events_per_pixel_wsd~c(1:40))
+slopes_wsd <- lm_wsd$coefficients[2]
+slopes_wsd*40
+lm_d <- lm(events_per_pixel_d~c(1:40))
+slopes_d <- lm_d$coefficients[2]
+slopes_d*40
+lm_bwsd <- lm(events_per_pixel_bwsd~c(1:40))
+slopes_bwsd <- lm_bwsd$coefficients[2]
+slopes_bwsd*40
+lm_bd <- lm(events_per_pixel_bd~c(1:40))
+slopes_bd <- lm_bd$coefficients[2]
+slopes_bd*40
+
+
+# Annual growth rate in percent
+start_wsh <- lm_wsh$coefficients[1]+lm_wsh$coefficients[[2]]*1
+end_wsh <- lm_wsh$coefficients[1]+lm_wsh$coefficients[[2]]*40
+start_dsh <- lm_h$coefficients[1]+lm_h$coefficients[[2]]*1
+end_dsh <- lm_h$coefficients[1]+lm_h$coefficients[[2]]*40
+yearly_change_rate_perc_h <- c(((end_wsh / start_wsh) ^ (1/40) - 1) * 100, ((end_dsh / start_dsh) ^ (1/40) - 1) * 100)
+forty_year_change_rate_perc_h <-  c(((end_wsh) - (start_wsh)) / (start_wsh), ((end_dsh) - (start_dsh)) / (start_dsh)) * 100
+
+start_wsd <- lm_wsd$coefficients[1]+lm_wsd$coefficients[[2]]*1
+end_wsd <- lm_wsd$coefficients[1]+lm_wsd$coefficients[[2]]*40
+start_dsd <- lm_d$coefficients[1]+lm_d$coefficients[[2]]*1
+end_dsd <- lm_d$coefficients[1]+lm_d$coefficients[[2]]*40
+yearly_change_rate_perc_d <- c(((end_wsd / start_wsd) ^ (1/40) - 1) * 100, ((end_dsd / start_dsd) ^ (1/40) - 1) * 100)
+forty_year_change_rate_perc_d <-  c(((end_wsd) - (start_wsd)) / (start_wsd), ((end_dsd) - (start_dsd)) / (start_dsd)) * 100
+
+start_wsbd <- lm_bwsd$coefficients[1]+lm_bwsd$coefficients[[2]]*1
+end_wsbd <- lm_bwsd$coefficients[1]+lm_bwsd$coefficients[[2]]*40
+start_dsbd <- lm_bd$coefficients[1]+lm_bd$coefficients[[2]]*1
+end_dsbd <- lm_bd$coefficients[1]+lm_bd$coefficients[[2]]*40
+yearly_change_rate_perc_bd <- c(((end_wsbd / start_wsbd) ^ (1/40) - 1) * 100, ((end_dsbd / start_dsbd) ^ (1/40) - 1) * 100)
+forty_year_change_rate_perc_bd <-  c(((end_wsbd) - (start_wsbd)) / (start_wsbd), ((end_dsbd) - (start_dsbd)) / (start_dsbd)) * 100
+
+plot(events_per_pixel_wsh[,5]~c(1:40),type='l',col='red',ylim=c(0,max(events_per_pixel_h[,5])),main="Warm spells")
+abline(lm_wsh,col='red')
+lines(events_per_pixel_h[,5]~c(1:40),type='l',col='blue')
+abline(lm_h,col='blue')
+
+plot(events_per_pixel_wsd~c(1:40),type='l',col='red',ylim=c(0,max(events_per_pixel_d)), main="SPI droughts")
+abline(lm_wsd,col='red')
+lines(events_per_pixel_d~c(1:40),type='l',col='blue')
+abline(lm_d,col='blue')
+
+plot(events_per_pixel_bwsd~c(1:40),type='l',col='red',ylim=c(0,max(events_per_pixel_bd)), main="SPEI droughts")
+abline(lm_bwsd,col='red')
+lines(events_per_pixel_bd~c(1:40),type='l',col='blue')
+abline(lm_bd,col='blue')
+```
+
+```{r 9 cases plot, eval=T} 
+slopes_ws <- vector(mode="numeric",length=9)
+slopes <- vector(mode="numeric",length=9)
+lm_curr_case_ws <- vector(mode="list",length=9)
+lm_curr_case <- vector(mode="list",length=9)
+for (i in c(9:1)){
+  lm_curr_case_ws[[i]] <- lm(events_per_pixel_wsh[,i]~c(1:40))
+  slopes_ws[i] <- lm_curr_case_ws[[i]]$coefficients[2]
+  lm_curr_case[[i]] <- lm(events_per_pixel_h[,i]~c(1:40))
+  slopes[i] <- lm_curr_case[[i]]$coefficients[2]
+}
+dur_vec <- rep(c(3,5,7),3)
+per_vec <- c(rep(85,3),rep(90,3),rep(95,3))
+thenames <- sapply(9:1, function (x) {paste0(dur_vec[x],'-Day ',per_vec[x],'th Percentile')})
+
+
+slopes_both_seasons <- rbind(slopes_ws,slopes)
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/time_series_heatwaves_increase_9_cases_SPI.png",height=8,width=10,unit="cm",pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+par(mfrow=c(1,1),oma=c(0,5.5,0,1))
+barplot(slopes_both_seasons*40,horiz=T,xlab="Change in number of warm spells from 1979 - 2018",names.arg=thenames,las=1, beside=T, col=c("darkblue","DeepSkyBlue1"))
+legend(x="topright",legend=c("Warm season warm spells","Deseasonalised warm spells"),pch=15,col=c("darkblue","DeepSkyBlue1"))
+dev.off ()
+
+
+# Percentage change plots 
+perc_increase_ws <- sapply(9:1, function(x) (((lm_curr_case_ws[[x]]$coefficients[1]+lm_curr_case_ws[[x]]$coefficients[[2]]*40) / (lm_curr_case_ws[[x]]$coefficients[1]+lm_curr_case_ws[[x]]$coefficients[[2]]*1)) ^(1/40) - 1) * 100 )
+perc_increase <- sapply(9:1, function(x) (((lm_curr_case[[x]]$coefficients[1]+lm_curr_case[[x]]$coefficients[[2]]*40) / (lm_curr_case[[x]]$coefficients[1]+lm_curr_case[[x]]$coefficients[[2]]*1)) ^(1/40) - 1) * 100 )
+perc_increase_both_seasons <- rbind(perc_increase_ws,perc_increase)
+
+thenames[5] <- "" # is placed separately in bold using mtext
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/time_series_heatwaves_increase_9_cases_SPI_percentage.png",height=8,width=10,unit="cm",pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+par(mfrow=c(1,1),oma=c(0,5.5,0,1))
+barplot(perc_increase_both_seasons,horiz=T,xlab="Yearly percentage change rate in number of warm spells",names.arg=thenames, las=1, beside=T, col=c("SaddleBrown","ForestGreen"))
+mtext("5-Day 90th Percentile",side=2,line=0.65, font=2, las=2)
+legend(x="topright",legend=c("Warm season warm spells","Deseasonalised warm spells"),pch=15,col=c("SaddleBrown","ForestGreen"))
+dev.off ()
+```

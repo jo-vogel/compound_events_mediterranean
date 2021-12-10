@@ -1,0 +1,1235 @@
+---
+title: "Result_plots"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Main, include=FALSE, fig.height=1, fig.width=1}
+library(tictoc)
+tic('Total')
+tic('Statistics')
+if(!require(ncdf4)) install.packages("ncdf4") # package for netcdf manipulation
+library(raster) # package for raster manipulation
+library(rgdal) # package for geospatial analysis
+library(ggplot2) # package for plotting
+library(berryFunctions)
+library(Kendall)  
+library(cpm) # Cramér-von-Mises test
+library(RVAideMemoire) # Cramér-von-Mises test
+library(rasterVis) # levelplots
+library(dplyr)
+library(data.table)
+library(pbapply)
+library(mblm) # Theil-Sen slope
+library(ggcorrplot)
+library(corrplot)
+
+load("D:/user/vogelj/compound_events_mediterran/Code/Workspaces/Main_variables_warm_season_compound_events.RData") # Events for warm season compound events
+# load("D:/user/vogelj/compound_events_mediterran/Code/Workspaces/Main_variables_whole_season_compound_events.RData") # Events for whole season compound events
+# load("D:/user/vogelj/compound_events_mediterran/Code/Workspaces/Main_variables_warm_season_heat_events.RData") # Events for warm season heat waves
+# load("D:/user/vogelj/compound_events_mediterran/Code/Workspaces/Main_variables_whole_season_heat_events.RData") # Events for whole season heat waves
+
+# Revision
+# load("D:/user/vogelj/compound_events_mediterran/Code/Workspaces/Main_variables_warm_season_compound_events_multiple_droughts.RData") # Events for warm season compound events
+
+
+ocean <- readOGR('D:/user/vogelj/Data/ne_10m_ocean/ne_10m_ocean.shp') # Fuers Entfernen der Meeresfl?chen
+border <- readOGR('D:/user/vogelj/Data/ne_50m_admin_0_countries/ne_50m_admin_0_countries.shp')	
+end_dates_month <- cumsum(month_lengths) # last day of each month
+
+#################
+# for warm season:
+vecyears <- seq(1,(40*184+184),184) # Vector for the summer period of 40 years
+months_40years <- rep(c("05_May","06_Jun","07_Jul","08_Aug","09_Sep","10_Oct"),40)
+start_dates_month <- c(1,end_dates_month[1:239]+1) # first day of each month
+month_vect <- vector(mode='character',length=7360)
+end_dates_year <- cumsum(rep(184,40)[1:years])
+year_vect <- vector(mode='character',length=7360)
+for (i in 1:240) {month_vect[start_dates_month[i]:end_dates_month[i]] <- months_40years[i]}
+plotwindow <- c(2,3)
+month_names_plot <- c("May","Jun","Jul","Aug","Sep","Oct")
+
+# for whole season:
+# year_lengths <- rep(c(365,366,365,365),10)
+# vecyears <- c(1,cumsum(year_lengths)+1) # Vector for the whole period of 40 years
+# months_40years <- rep(c("01_Jan","02_Feb","03_Mar","04_Apr","05_May","06_Jun","07_Jul","08_Aug","09_Sep","10_Oct","11_Nov","12_Dec"),40)
+# start_dates_month <- c(1,end_dates_month[1:479]+1) # first day of each month
+# month_vect <- vector(mode='character',length=14610)
+# end_dates_year <- cumsum(rep(c(365,366,365,365),10)[1:years])
+# year_vect <- vector(mode='character',length=14610)
+# for (i in 1:480) {month_vect[start_dates_month[i]:end_dates_month[i]] <- months_40years[i]}
+# plotwindow <- c(3,4)
+# month_names_plot <- c("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
+##################
+```
+
+```{r Renaming, eval=T} 
+# message('renaming output from one workspace, so you can load another workspace with identical names without overwriting the first')
+# Warm season SPI
+event_ws <- event
+events_per_time_ws <- events_per_time
+event_series_ws <- event_series
+
+# Warm season SPEI
+event_bws <- event_b
+events_per_time_bws <- events_per_time_b
+event_series_bws <- event_series_b
+
+month_lengths_ws <- month_lengths
+vecyears_ws <- vecyears
+
+load("D:/user/vogelj/compound_events_mediterran/Code/Workspaces/Main_variables_whole_season_compound_events.RData") # Events for whole season compound events
+# Revision
+# load("D:/user/vogelj/compound_events_mediterran/Code/Workspaces/Main_variables_whole_season_compound_events_multiple_droughts.RData") # Events for whole season compound events
+year_lengths <- rep(c(365,366,365,365),10)
+vecyears <- c(1,cumsum(year_lengths)+1) # Vector for the whole period of 40 years
+```
+
+```{r SPEI, eval=F} 
+# message('easy, preliminary way to change from SPI to SPEI (without having to adjust the whole code)')
+# SPI events
+event_a <- event
+events_per_time_a <- events_per_time
+event_series_a <- event_series
+
+# SPEI events
+event <- event_b
+events_per_time <- events_per_time_b
+event_series <- event_series_b
+```
+
+
+```{r Results}
+# Calculate changes over time
+# change <- ((event[,,,2]-event[,,,1])/event[,,,3])*100 # change in percent (2nd to 1st period)
+change <- ((event[,,,2]-event[,,,1])/event[,,,1])*100 # Percent (%) change in compound droughts and heatwaves during second period relative to first period
+fraction <- ((event[,,,2]-event[,,,1])/(event[,,,2]+event[,,,1]))*100 # Percentage change of compound events between 1999 - 2018 and 1979 - 1998, normalised by whole time period 
+fraction_2ndperiod <- (event[,,,2]/event[,,,3])*100 # fraction of all events that occurred in the second time span
+# fraction ist das was Mazdiyasni gemacht hat. Es geht von -100 bis 100% und ist durch die Gesamtanzahl der Events normiert.
+# es ist aber ja nicht die prozentuale ?nderung relativ zur ersten H?lfte, sondern die proz. ?nderung relativ zum gesamten Zeitraum
+diff <- vector(mode="list",length=9)
+counter <- 1
+for (i in 1:3){
+  for (j in 1:3){
+    diff[[counter]] <- (event[,i,j,2]-event[,i,j,1]) # difference from 2nd to 1st period
+    counter <- counter + 1
+  }
+}
+change2 <- array(change,dim=c(length(coord[,1]),9))
+fraction2 <- array(fraction,dim=c(length(coord[,1]),9))
+fraction_2ndperiod <- array(fraction_2ndperiod,dim=c(length(coord[,1]),9))
+event2 <- array(event,dim=c(length(coord[,1]),9,2)) # statt 2 Dim (3x3), nur 1 Dim (9), erst Zeilen, dann Spalten (siehe z.B. identical(event[,1,2,1],event2[,4,1])); event hat noch in der letzten Dimension noch eine weitere, dritte Spalte (1.Spalte: 1. Zeitraum, 2. Spalte: 2. Zeitraum, 3.Spalte: Gesamtzeitraum), diese wird hier bei der Umwandlung weggelassen
+
+# attach coordinates
+dat_1stperiod <- lapply(1:9, function (x) {cbind(coord,event2[,x,1])}) 
+dat_2ndperiod <- lapply(1:9, function (x) {cbind(coord,event2[,x,2])})
+datchange <- lapply(1:9, function (x) {cbind(coord,change2[,x])})
+datfraction <- lapply(1:9, function (x) {cbind(coord,fraction2[,x])})
+datfraction_2ndperiod <- lapply(1:9, function (x) {cbind(coord,fraction_2ndperiod[,x])})
+datdiff <- lapply(1:9, function (x) {cbind(coord,diff[[x]])})
+# convert to raster
+datras_1stperiod <- lapply(dat_1stperiod,rasterFromXYZ) # 1979 - 1998
+datras_2ndperiod <- lapply(dat_2ndperiod,rasterFromXYZ) # 1999 - 2018
+datras_change <- lapply(datchange,rasterFromXYZ)
+datras_fraction <- lapply(datfraction,rasterFromXYZ)
+datras_fraction_2ndperiod <- lapply(datfraction_2ndperiod,rasterFromXYZ)
+datras_diff <- lapply(datdiff,rasterFromXYZ)
+
+# transform lists to bricks (easier to handle)
+brick_1stperiod <- brick(datras_1stperiod)
+brick_2ndperiod <- brick(datras_2ndperiod)
+brick_change <- brick(datras_change)
+brick_fraction <- brick(datras_fraction)
+brick_fraction_2ndperiod <- brick(datras_fraction_2ndperiod)
+brick_diff <- brick(datras_diff)
+
+
+# Calculate changes over time
+# change <- ((event[,,,2]-event[,,,1])/event[,,,3])*100 # change in percent (2nd to 1st period)
+change_b <- ((event_b[,,,2]-event_b[,,,1])/event_b[,,,1])*100 # Percent (%) change in compound droughts and heatwaves during second period relative to first period
+fraction_b <- ((event_b[,,,2]-event_b[,,,1])/(event_b[,,,2]+event_b[,,,1]))*100 # Percentage change of compound events between 1999 - 2018 and 1979 - 1998, normalised by whole time period 
+fraction_2ndperiod_b <- (event_b[,,,2]/event_b[,,,3])*100 # fraction of all events that occurred in the second time span
+# fraction ist das was Mazdiyasni gemacht hat. Es geht von -100 bis 100% und ist durch die Gesamtanzahl der Events normiert.
+# es ist aber ja nicht die prozentuale ?nderung relativ zur ersten H?lfte, sondern die proz. ?nderung relativ zum gesamten Zeitraum
+diff_b <- vector(mode="list",length=9)
+counter <- 1
+for (i in 1:3){
+  for (j in 1:3){
+    diff_b[[counter]] <- (event_b[,i,j,2]-event_b[,i,j,1]) # difference from 2nd to 1st period
+    counter <- counter + 1
+  }
+}
+change2_b <- array(change_b,dim=c(length(coord[,1]),9))
+fraction2_b <- array(fraction_b,dim=c(length(coord[,1]),9))
+fraction_2ndperiod_b <- array(fraction_2ndperiod_b,dim=c(length(coord[,1]),9))
+event2_b <- array(event_b,dim=c(length(coord[,1]),9,2)) # statt 2 Dim (3x3), nur 1 Dim (9), erst Zeilen, dann Spalten (siehe z.B. identical(event[,1,2,1],event2[,4,1])); event hat noch in der letzten Dimension noch eine weitere, dritte Spalte (1.Spalte: 1. Zeitraum, 2. Spalte: 2. Zeitraum, 3.Spalte: Gesamtzeitraum), diese wird hier bei der Umwandlung weggelassen
+
+# attach coordinates
+dat_1stperiod_b <- lapply(1:9, function (x) {cbind(coord,event2_b[,x,1])}) 
+dat_2ndperiod_b <- lapply(1:9, function (x) {cbind(coord,event2_b[,x,2])})
+datchange_b <- lapply(1:9, function (x) {cbind(coord,change2_b[,x])})
+datfraction_b <- lapply(1:9, function (x) {cbind(coord,fraction2_b[,x])})
+datfraction_2ndperiod_b <- lapply(1:9, function (x) {cbind(coord,fraction_2ndperiod_b[,x])})
+datdiff_b <- lapply(1:9, function (x) {cbind(coord,diff_b[[x]])})
+# convert to raster
+datras_1stperiod_b <- lapply(dat_1stperiod_b,rasterFromXYZ) # 1979 - 1998
+datras_2ndperiod_b <- lapply(dat_2ndperiod_b,rasterFromXYZ) # 1999 - 2018
+datras_change_b <- lapply(datchange_b,rasterFromXYZ)
+datras_fraction_b <- lapply(datfraction_b,rasterFromXYZ)
+datras_fraction_2ndperiod_b <- lapply(datfraction_2ndperiod_b,rasterFromXYZ)
+datras_diff_b <- lapply(datdiff_b,rasterFromXYZ)
+
+# transform lists to bricks (easier to handle)
+brick_1stperiod_b <- brick(datras_1stperiod_b)
+brick_2ndperiod_b <- brick(datras_2ndperiod_b)
+brick_change_b <- brick(datras_change_b)
+brick_fraction_b <- brick(datras_fraction_b)
+brick_fraction_2ndperiod_b <- brick(datras_fraction_2ndperiod_b)
+brick_diff_b <- brick(datras_diff_b)
+
+dur_vec <- rep(c(3,5,7),3)
+per_vec <- c(rep(85,3),rep(90,3),rep(95,3))
+
+```
+
+```{r Results for warm season, eval=T}
+message('This is in case of loading 2 data sets')
+# Warm season ####
+##################
+fraction_ws <- ((event_ws[,,,2]-event_ws[,,,1])/(event_ws[,,,2]+event_ws[,,,1]))*100 # Percentage change of compound 
+fraction2_ws <- array(fraction_ws,dim=c(length(coord[,1]),9))
+event2_ws <- array(event_ws,dim=c(length(coord[,1]),9,2))
+dat_1stperiod_ws <- lapply(1:9, function (x) {cbind(coord,event2_ws[,x,1])}) 
+dat_2ndperiod_ws <- lapply(1:9, function (x) {cbind(coord,event2_ws[,x,2])})
+datfraction_ws <- lapply(1:9, function (x) {cbind(coord,fraction2_ws[,x])})
+datras_1stperiod_ws <- lapply(dat_1stperiod_ws,rasterFromXYZ) # 1979 - 1998
+datras_2ndperiod_ws <- lapply(dat_2ndperiod_ws,rasterFromXYZ) # 1999 - 2018
+datras_fraction_ws <- lapply(datfraction_ws,rasterFromXYZ)
+brick_1stperiod_ws <- brick(datras_1stperiod_ws)
+brick_2ndperiod_ws <- brick(datras_2ndperiod_ws)
+brick_fraction_ws <- brick(datras_fraction_ws)
+
+
+fraction_bws <- ((event_bws[,,,2]-event_bws[,,,1])/(event_bws[,,,2]+event_bws[,,,1]))*100 # Percentage change of compound 
+fraction2_bws <- array(fraction_bws,dim=c(length(coord[,1]),9))
+event2_bws <- array(event_bws,dim=c(length(coord[,1]),9,2))
+dat_1stperiod_bws <- lapply(1:9, function (x) {cbind(coord,event2_bws[,x,1])}) 
+dat_2ndperiod_bws <- lapply(1:9, function (x) {cbind(coord,event2_bws[,x,2])})
+datfraction_bws <- lapply(1:9, function (x) {cbind(coord,fraction2_bws[,x])})
+datras_1stperiod_bws <- lapply(dat_1stperiod_bws,rasterFromXYZ) # 1979 - 1998
+datras_2ndperiod_bws <- lapply(dat_2ndperiod_bws,rasterFromXYZ) # 1999 - 2018
+datras_fraction_bws <- lapply(datfraction_bws,rasterFromXYZ)
+brick_1stperiod_bws <- brick(datras_1stperiod_bws)
+brick_2ndperiod_bws <- brick(datras_2ndperiod_bws)
+brick_fraction_bws <- brick(datras_fraction_bws)
+```
+
+``` {r Csa Csb areas, eval=T}
+# Remove areas which are not part of Köppen-Geiger Csa and Csb
+datras_1stperiod <- lapply(datras_1stperiod,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+datras_2ndperiod <- lapply(datras_2ndperiod,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+datras_change <- lapply(datras_change,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+datras_fraction <- lapply(datras_fraction,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+datras_fraction_2ndperiod <- lapply(datras_fraction_2ndperiod,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+datras_diff <- lapply(datras_diff,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+
+datras_1stperiod_b <- lapply(datras_1stperiod_b,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+datras_2ndperiod_b <- lapply(datras_2ndperiod_b,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+datras_change_b <- lapply(datras_change_b,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+datras_fraction_b <- lapply(datras_fraction_b,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+datras_fraction_2ndperiod_b <- lapply(datras_fraction_2ndperiod_b,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+datras_diff_b <- lapply(datras_diff_b,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+
+```
+
+```{r Csa Csb areas for warm season, eval=T}
+message('This is in case of loading 2 data sets')
+datras_1stperiod_ws <- lapply(datras_1stperiod_ws,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+datras_2ndperiod_ws <- lapply(datras_2ndperiod_ws,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+datras_fraction_ws <- lapply(datras_fraction_ws,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+
+datras_1stperiod_bws <- lapply(datras_1stperiod_bws,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+datras_2ndperiod_bws <- lapply(datras_2ndperiod_bws,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+datras_fraction_bws <- lapply(datras_fraction_bws,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+```
+
+``` {r Crop extent, eval=T}
+med_extent <- c(-9.625,40.125,30.375,45.125)
+datras_1stperiod <- lapply(datras_1stperiod,function(x){crop(x,med_extent)})
+datras_2ndperiod <- lapply(datras_2ndperiod,function(x){crop(x,med_extent)})
+datras_change <- lapply(datras_change,function(x){crop(x,med_extent)})
+datras_fraction <- lapply(datras_fraction,function(x){crop(x,med_extent)})
+datras_fraction_2ndperiod <- lapply(datras_fraction_2ndperiod,function(x){crop(x,med_extent)})
+datras_diff <- lapply(datras_diff,function(x){crop(x,med_extent)})
+
+datras_1stperiod_b <- lapply(datras_1stperiod_b,function(x){crop(x,med_extent)})
+datras_2ndperiod_b <- lapply(datras_2ndperiod_b,function(x){crop(x,med_extent)})
+datras_change_b <- lapply(datras_change_b,function(x){crop(x,med_extent)})
+datras_fraction_b <- lapply(datras_fraction_b,function(x){crop(x,med_extent)})
+datras_fraction_2ndperiod_b <-lapply(datras_fraction_2ndperiod_b,function(x){crop(x,med_extent)})
+datras_diff_b <- lapply(datras_diff_b,function(x){crop(x,med_extent)})
+
+```
+
+```{r Crop extent for warm season, eval=T}
+message('This is in case of loading 2 data sets')
+datras_1stperiod_ws <- lapply(datras_1stperiod_ws,function(x){crop(x,med_extent)})
+datras_2ndperiod_ws <- lapply(datras_2ndperiod_ws,function(x){crop(x,med_extent)})
+datras_fraction_ws <- lapply(datras_fraction_ws,function(x){crop(x,med_extent)})
+
+datras_1stperiod_bws <- lapply(datras_1stperiod_bws,function(x){crop(x,med_extent)})
+datras_2ndperiod_bws <- lapply(datras_2ndperiod_bws,function(x){crop(x,med_extent)})
+datras_fraction_bws <- lapply(datras_fraction_bws,function(x){crop(x,med_extent)})
+```
+
+``` {r Spatial plots, eval=T}
+# Levelplot for both time spans with SPI
+events_both_periods_SPI_brick <- brick(datras_1stperiod_ws[[5]],datras_2ndperiod_ws[[5]],datras_1stperiod[[5]],datras_2ndperiod[[5]])
+events_both_periods_SPI_stack <- stack(datras_1stperiod_ws[[5]],datras_2ndperiod_ws[[5]],datras_1stperiod[[5]],datras_2ndperiod[[5]])
+
+thenames <- c('1979 - 1998 warm season events','1999 - 2018 warm season events','1979 - 1998 deseasonalised events','1999 - 2018 deseasonalised events')
+myTheme <- rasterTheme(region = c( "#6371AF", "#959CC3","#E2E6BD" ,"#E5D961" , "#E9B62D" ,"#EAA428" # blue to yellow to red
+                                  ,"#E89132"  ,"#E06B50" ,"#D33F6A"))
+myTheme$panel.background$col = 'gray97' # NA values
+p.strip <- list(cex=0.5, lines=1, font=2) # subplot titles
+my.at <- seq(min(events_both_periods_SPI_brick@data@min),max(events_both_periods_SPI_brick@data@max),10)
+my.at2 <- seq(min(events_both_periods_SPI_brick@data@min),max(events_both_periods_SPI_brick@data@max),1)
+my.labels <- paste0(seq(min(events_both_periods_SPI_brick@data@min),max(events_both_periods_SPI_brick@data@max),10))
+myColorkey <- list(at=my.at2, ## where the colors change
+                   labels=list(
+                     labels=my.labels, # label names
+                     at=my.at, ## where to print labels
+                     cex=1, font=2),
+                   height=0.85, width=1.4
+                   )
+
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/number_compound_SPI_warm_whole_seas.png",height=6,width=14,unit="cm",
+    pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+par(oma=c(1,1,1,1),mar=c(1,1,1,1))
+levelplot(events_both_periods_SPI_stack,between=list(x=0.5,y=0.5),par.settings=myTheme,names.attr=thenames,
+          par.strip.text=p.strip,
+          scales=list(draw=FALSE),
+          at=my.at2, colorkey=myColorkey, fontface=2, asp=1)+
+  layer(sp.polygons(border,col='black'))+
+  layer(sp.polygons(ocean,fill='lightblue',col='black')) #  pixel overlapping into the sea are covered
+dev.off()
+
+# Levelplot for both time spans with SPEI
+events_both_periods_SPEI_brick <- brick(datras_1stperiod_bws[[5]],datras_2ndperiod_bws[[5]],datras_1stperiod_b[[5]],datras_2ndperiod_b[[5]])
+events_both_periods_SPEI_stack <- stack(datras_1stperiod_bws[[5]],datras_2ndperiod_bws[[5]],datras_1stperiod_b[[5]],datras_2ndperiod_b[[5]])
+my.at <- seq(min(events_both_periods_SPEI_brick@data@min),max(events_both_periods_SPEI_brick@data@max),10)
+my.at2 <- seq(min(events_both_periods_SPEI_brick@data@min),max(events_both_periods_SPEI_brick@data@max),1)
+my.labels <- paste0(seq(min(events_both_periods_SPEI_brick@data@min),max(events_both_periods_SPEI_brick@data@max),10))
+myColorkey <- list(at=my.at2, ## where the colors change
+                   labels=list(
+                     labels=my.labels, # label names
+                     at=my.at, ## where to print labels
+                     cex=1, font=2),
+                   height=0.85, width=1.4
+                   )
+
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/number_compound_SPEI_warm_whole_seas.png",height=6,width=14,unit="cm",
+    pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+levelplot(events_both_periods_SPEI_stack,par.settings=myTheme,names.attr=thenames,
+          par.strip.text=p.strip,
+          scales=list(draw=FALSE),
+          at=my.at2, colorkey=myColorkey, fontface=2, asp=1)+
+  layer(sp.polygons(border,col='black'))+
+  layer(sp.polygons(ocean,fill='lightblue',col='black')) #  pixel overlapping into the sea are covered
+dev.off()
+
+# Figure: Number of compound heat waves and droughts for the two 20-year periods 1979 – 1998 and 1999 – 2018. Droughts are defined by monthly Standardized Precipitation Index (SPI) < - 0.8, heat waves are defined by daily maximum air temperature above the 90th percentile for a duration of 5 days.
+
+
+# Levelplot for fraction of events happening in second time span with SPI and SPEI
+fraction_2ndperiod_brick <- brick(datras_fraction_2ndperiod[[5]],datras_fraction_2ndperiod_b[[5]])
+fraction_2ndperiod_stack <- stack(datras_fraction_2ndperiod[[5]],datras_fraction_2ndperiod_b[[5]])
+
+thenames <- c('Fraction all events happening in 1999 - 2018 with SPI','Fraction all events happening in 1999 - 2018 with SPEI')
+
+my.at <- seq(0,max(fraction_2ndperiod_brick@data@max),10)
+my.at2 <- seq(0,max(fraction_2ndperiod_brick@data@max),1)
+my.labels <- paste0(seq(0,max(fraction_2ndperiod_brick@data@max),10))
+myColorkey <- list(at=my.at2, ## where the colors change
+                   labels=list(
+                     labels=my.labels, # label names
+                     at=my.at, ## where to print labels
+                     cex=1, font=2),
+                   height=0.85, width=1.4#,
+                   )
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/fraction_2nd_period_compound_warm_seas.png",height=6,width=14,unit="cm",
+    pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+levelplot(fraction_2ndperiod_brick,par.settings=myTheme,names.attr=thenames,
+          par.strip.text=p.strip,
+          scales=list(draw=FALSE),
+          at=my.at2, colorkey=myColorkey, fontface=2, asp=1)+
+  layer(sp.polygons(border,col='black'))+
+  layer(sp.polygons(ocean,fill='lightblue',col='black')) #  pixel overlapping into the sea are covered
+dev.off()
+
+# Levelplot for fraction of events happening in second time span with SPI and SPEI
+fraction_brick <- brick(datras_fraction_ws[[5]],datras_fraction[[5]])
+# fraction_brick <- brick(datras_fraction_ws[[5]],datras_fraction_bws[[5]],datras_fraction[[5]],datras_fraction_b[[5]])
+# fraction_stack <- stack(datras_fraction_ws[[5]],datras_fraction_bws[[5]],datras_fraction[[5]],datras_fraction_b[[5]])
+
+myThemelow <- colorRampPalette(c(viridis::viridis(9, direction = 1)[1:4], "cadetblue3", "white"))(100)
+myThemeup <- colorRampPalette(c("white","gold2", "orangered3", "orangered4"))(100)
+myTheme <- rasterTheme(region=c(myThemelow,myThemeup))
+
+thenames <- c('Warm season compound events','Deseasonalised compound events')
+# thenames <- c('SPI warm season','SPEI warm season', 'SPI whole season','SPEI whole season')
+my.at <- seq(-100,100,25)
+my.at2 <- seq(-100,100,5)
+my.labels <- paste0(seq(-100,100,25),'%')
+myColorkey <- list(at=my.at2, ## where the colors change
+                   labels=list(
+                     labels=my.labels, # label names
+                     at=my.at, ## where to print labels
+                     cex=0.8, font=2),
+                   height=0.85, width=1.4#,
+                   )
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/fraction_compound_warm_whole_seas.png",height=8,width=10,unit="cm",
+    pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+levelplot(fraction_brick,par.settings=myTheme,names.attr=thenames
+          #,main="Distribution of events \n between 1979 - 1998 and 1999 - 2018"
+          ,par.strip.text=p.strip,
+          scales=list(draw=FALSE),
+          at=my.at2, colorkey=myColorkey, fontface=2, asp=1)+
+  layer(sp.polygons(border,col='black'))+
+  layer(sp.polygons(ocean,fill='lightblue',col='black')) #  pixel overlapping into the sea are covered
+dev.off()
+
+
+# 9-window levelplot of cdfs for heatwaves (with SPI)
+events_both_periods_SPI_stack_9 <- stack(datras_fraction[[1]],datras_fraction[[2]],datras_fraction[[3]],datras_fraction[[4]],datras_fraction[[5]],datras_fraction[[6]],datras_fraction[[7]],datras_fraction[[8]],datras_fraction[[9]])
+thenames <- sapply(1:9, function (x) {paste0(dur_vec[x],'-Day ',per_vec[x],'th Percentile')})
+
+# myTheme <- rasterTheme(region = c( "#6371AF", "#959CC3","#E2E6BD" ,"#E5D961" , "#E9B62D" ,"#EAA428" # blue to yellow to red
+                                  # ,"#E89132"  ,"#E06B50" ,"#D33F6A"))
+myTheme$panel.background$col = 'gray97' # NA values
+# my.at <- seq(0,100,10)
+# my.labels <- paste0(seq(0,100,10),'%')
+my.at <- seq(-100,100,20)
+my.at2 <- seq(-100,100,5)
+my.labels <- paste0(seq(-100,100,20),'%')
+p.strip <- list(cex=0.5, lines=1, font=2) # subplot titles
+myColorkey <- list(at=my.at, ## where the colors change
+                   labels=list(
+                     labels=my.labels, # label names
+                     at=my.at, ## where to print labels
+                     cex=0.6, font=2),
+                   height=0.85, width=1.4)
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/compound_9heatwaves_SPI_warm_seas.png",height=6,width=14,unit="cm",
+    pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+levelplot(events_both_periods_SPI_stack_9,par.settings=myTheme,names.attr=thenames,
+          par.strip.text=p.strip,
+          scales=list(draw=FALSE),
+          at=my.at2, colorkey=myColorkey, fontface=2, asp=1)+
+  layer(sp.polygons(border,col='black'))+
+  layer(sp.polygons(ocean,fill='lightblue',col='black'))
+dev.off()
+```
+
+```{r Statistics on spatial plots, eval=T}
+# Identification of pixel ####
+maxima <- cellStats(events_both_periods_SPI_stack,stat='max')/20
+means <- cellStats(events_both_periods_SPI_stack,stat='mean')/20 # divided by the number of years
+minima <- cellStats(events_both_periods_SPI_stack,stat='min')/20
+
+
+# Average number of compound events per year between 1979 - 1998 and 1999 - 2018
+mean_1stperiod <- cellStats(brick_1stperiod,stat='mean') # 1979 - 1998 SPI
+mean_2ndperiod <- cellStats(brick_2ndperiod,stat='mean') # 1999 - 2018 SPI
+mean_1stperiod_b <- cellStats(brick_1stperiod_b,stat='mean') # 1979 - 1998 SPEI
+mean_2ndperiod_b <- cellStats(brick_2ndperiod_b,stat='mean') # 1999 - 2018 SPEI
+thenames2 <- sapply(1:9, function (x) {paste0(dur_vec[x],'-Day ',per_vec[x],'th \n Percentile')})
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/event_number_9_cases_SPI_SPEI_warm_whole_seas.png",height=8,width=10,unit="cm",
+    pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+par(oma=c(1,1,0,1))
+plot(mean_1stperiod,col='green',ylim=c(0,max(mean_2ndperiod_b,mean_2ndperiod)),ylab="Average yearly number of events per pixel",xlab="",main="85th, 90th, 95th percentile, 3-, 5- and 7 days",xaxt="n")
+points(mean_2ndperiod,col='blue')
+points(mean_1stperiod_b,col='orange')
+points(mean_2ndperiod_b,col='purple')
+legend('topright',legend=c('1979 - 1998 SPI','1999 - 2018 SPI','1979 - 1998 SPEI','1999 - 2018 SPEI'),col=c("green","blue",'orange','purple'),lwd=2,cex=0.8)
+mtext(thenames2, side=1, line=1, at=c(1,2,3,4,5,6,7,8,9), font=2,las=2, cex=0.8)
+dev.off()
+
+# Which pixel has most/least events in first and second time period?
+maxnum_1stperiod <- which.max(datras_1stperiod[[5]])
+maxnum_2ndperiod <- which.max(datras_2ndperiod[[5]])
+minnum_1stperiod <- which.min(datras_1stperiod[[5]])
+minnum_2ndperiod <- which.min(datras_2ndperiod[[5]])
+
+# Maximum number of events in each period
+max_1stperiod <- cellStats(brick_1stperiod,stat='max') # 1979 - 1998 SPI
+max_2ndperiod <- cellStats(brick_2ndperiod,stat='max') # 1999 - 2018 SPI
+# max_1stperiod <- cellStats(brick_1stperiod,stat='which.max') # 1979 - 1998 SPI
+
+# Which layer has the extremum?
+t1 <- whiches.max(brick_1stperiod)
+freq(t1) # 123456789 just means, that there are many values where all 9 are the same
+plot(t1)
+plot(t1,zlim=c(1,9)) # so, it is almost always layer 1
+t2 <- which.max(brick_1stperiod) # almost always the first layer
+# t1 and t2 show basically the same, only that t1 can handle ties
+
+t3 <- whiches.min(brick_1stperiod)
+plot(t3,zlim=c(1,9)) # usually layer 9
+t4 <- which.min(brick_1stperiod) # raster object, which indicates for each pixel, which of the 9 values is minimal
+
+t5 <- which.max(brick_1stperiod[[1]])
+# t6 <-  which.min(brick_1stperiod[[1]]) # gives you many 0s
+
+
+# Which pixel has the highest relative/absolute change between the two periods?
+maxchange <- which.max(datras_change[[5]])
+maxdiff <- which.max(datras_diff[[5]])
+minchange <- which.min(datras_change[[5]])
+mindiff <- which.min(datras_diff[[5]])
+
+maxchange_locations <- xyFromCell(datras_change[[5]],maxchange)
+maxdiff_locations <- xyFromCell(datras_diff[[5]],maxdiff)
+minchange_locations <- xyFromCell(datras_change[[5]],minchange)
+mindiff_locations <- xyFromCell(datras_diff[[5]],mindiff)
+
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/Comparison_absolute_relative_maximum_compound_2periods_SPI_warm_seas.png",height=8,width=10,unit="cm",
+    pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+par(mfrow=c(2,1))
+plot(datras_change[[5]])
+points(minchange_locations,pch=3,col='blue')
+points(maxchange_locations,pch=4,col='red')
+
+plot(datras_diff[[5]])
+points(mindiff_locations,pch=3,col='blue')
+points(maxdiff_locations,pch=4,col='red')
+dev.off()
+
+# Where is the number of events higher/equal/smaller in the second period?
+colorset <- rainbow(100)[c(1,10,17,20,30,50,70,80,90)] # own color labels: red, orange, yellow, lime green, green, turquoise, blue, purple, magenta
+p_max_ws <- whiches.max(events_both_periods_SPI_brick[[1:2]]) # warm season
+# p_max <- whiches.max(events_both_periods_SPEI_brick[[1:2]]) # warm season
+p_max <- whiches.max(events_both_periods_SPI_brick[[3:4]]) # whole season
+# p_max <- whiches.max(events_both_periods_SPEI_brick[[3:4]]) # whole season
+# png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/Comparison_compound_2periods_SPEI_warm_seas.png",height=8,width=10,unit="cm",
+    # pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/Comparison_compound_2periods_SPI_warm_whole_seas.png",height=10,width=12,unit="cm",
+    pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows") # important to use adequate height and width here (appr. 6/10)
+par(mfrow=c(2,1),mar=c(2, 3, 2, 2))
+plot(p_max_ws,col=colorset[1:7],ext=med_extent,asp=T,axes=F,main="Warm season compound events") # useRaster=F, this way the extent is right depicted
+# very few points in Spain, Maghreb and southern Turkey remain unchanged, only Galicia and southern Turkey has changed in the other direction
+plot(border,col='transparent', border='black',add=TRUE);plot(ocean,col='cornflowerblue',add=TRUE,lwd=0.4)
+legend('topright',legend=c('Equal number of events','More events in 1999 - 2018','More events in 1979 - 1998'),col=c("blue",'orange','red'),cex=0.75,bg="antiquewhite1",fill=c("blue",'orange','red'),text.font=2)
+
+# levelplot(p_max,scales=list(draw=FALSE),fontface=2, asp=1)+
+#   layer(sp.polygons(border,col='black'))+
+#   layer(sp.polygons(ocean,fill='lightblue',col='black'))+
+#   legend('topright',legend=c('Equal number of events','More events in 1999 - 2018','More events in 1979 - 1998'),col=c("blue",'orange','red'),cex=0.8,bg="antiquewhite1",fill=c("blue",'orange','red'),text.font=2)
+
+plot(p_max,col=colorset[1:7],ext=med_extent,asp=T,axes=F,main="Deseaonalised compound events") # useRaster=F, this way the extent is right depicted
+plot(border,col='transparent', border='black',add=TRUE);plot(ocean,col='cornflowerblue',add=TRUE,lwd=0.4)
+legend('topright',legend=c('Equal number of events','More events in 1999 - 2018','More events in 1979 - 1998'),col=c("blue",'orange','red'),cex=0.75,bg="antiquewhite1",fill=c("blue",'orange','red'),text.font=2)
+dev.off()
+
+num_pix_each_period_ws <- table(p_max_ws@data@values) # number of pixels in each category (i.e. each period)
+num_pix_each_period_perc_ws <-table(p_max_ws@data@values)/sum(table(p_max_ws@data@values)) # same number as percentage
+
+num_pix_each_period <- table(p_max@data@values) # number of pixels in each category (i.e. each period)
+num_pix_each_period_perc <-table(p_max@data@values)/sum(table(p_max_ws@data@values)) # same number as percentage
+
+# plot(p_max,zlim=c(1,2)) 
+
+# which indicates a) which cell for a layer, b) which layer for a stack
+# whiches indicates which layers have the value (for ties  35 means "layers 3 and 5")
+
+
+# Identify in which regions SPI events are higher than SPEI events ####
+
+# higher number 1st/2nd period, higher diff, higher change
+diff_SPI_SPEI <- whiches.max(brick(datras_diff[[5]],datras_diff_b[[5]]))
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/Comparison_absolute_compound_2periods_SPEI_SPI_warm_seas.png",height=6,width=12,unit="cm",
+    pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+plot(diff_SPI_SPEI,col=colorset[1:7],main="Comparison of absolute changes between 1979 - 1998 to 1999 - 2018",ext=med_extent,asp=T) # SPEI almost always higher
+plot(border,col='transparent', border='black',add=TRUE)
+legend('topright',legend=c('Equal number of events','More events using SPI definition','More events using SPEI definition'),col=c("blue",'orange','red'),cex=0.8,bg="antiquewhite1",fill=c("blue",'orange','red'),text.font=2)
+dev.off()
+
+change_SPI_SPEI <- whiches.max(brick(datras_change[[5]],datras_change_b[[5]]))
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/Comparison_relative_compound_2periods_SPEI_SPI_warm_seas.png",height=6,width=12,unit="cm",
+    pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+plot(change_SPI_SPEI,col=colorset[1:7],main="Comparison of relative changes between 1979 - 1998 to 1999 - 2018",ext=med_extent,asp=T) 
+plot(border,col='transparent', border='black',add=TRUE)
+legend('topright',legend=c('Equal number of events','More events using SPI definition','More events using SPEI definition'),col=c("blue",'orange','red'),cex=0.8,bg="antiquewhite1",fill=c("blue",'orange','red'),text.font=2)
+# diff and change plots for absolute and relative changes almost identical here
+dev.off()
+
+p_max_fraction <- whiches.max(fraction_2ndperiod_brick) # SPI and SPEI
+# plot(p_max_fraction,zlim=c(1,2),col=viridis(10))
+plot(p_max_fraction,col=colorset[1:7])
+
+num_1st_period_SPI_SPEI <- whiches.max(brick(datras_1stperiod[[5]],datras_1stperiod_b[[5]]))
+plot(num_1st_period_SPI_SPEI,col=colorset[1:7])
+
+num_2nd_period_SPI_SPEI <- whiches.max(brick(datras_2ndperiod[[5]],datras_2ndperiod_b[[5]]))
+plot(num_2nd_period_SPI_SPEI,col=colorset[1:7])
+
+# differences increase: in the first period the number of events is often equal, in the later stage not anymore --> indicator that especially PET is changing, and this needs to be accounted for, therefore SPI alone might not be sufficient
+
+```
+
+```{r Basic calculations, fig.height=10, fig.width=10}
+# aggregate Percent area in compound event of all pixels for each day using "events_per_time"
+# area_size <- length(na.omit(datras_1stperiod[[1]]@data@values))
+area_size <- length(which(Koeppen@data@values==1))
+
+events_per_time2 <- array(events_per_time,dim=c(dim(events_per_time)[1],9))# dim: pixels, heat wave cases
+events_per_pixel <- sapply(1:9,function(y){sapply(1:years, function (x) {sum(events_per_time2[(vecyears[x]:(vecyears[x+1]-1)),y])/area_size})}) # total yearly sum of compound events for all 9 cases, divided by total area
+
+events_per_time2_ws <- array(events_per_time_ws,dim=c(dim(events_per_time_ws)[1],9))# dim: pixels, heat wave cases
+events_per_pixel_ws <- sapply(1:9,function(y){sapply(1:years, function (x) {sum(events_per_time2_ws[(vecyears_ws[x]:(vecyears_ws[x+1]-1)),y])/area_size})}) # total yearly sum of compound events for all 9 cases, divided by total area
+
+
+events_per_time2_b <- array(events_per_time_b,dim=c(dim(events_per_time_b)[1],9))# dim: pixels, heat wave cases
+events_per_pixel_b <- sapply(1:9,function(y){sapply(1:years, function (x) {sum(events_per_time2_b[(vecyears[x]:(vecyears[x+1]-1)),y])/area_size})}) # total yearly sum of compound events for all 9 cases, divided by total area
+
+events_per_time2_bws <- array(events_per_time_bws,dim=c(dim(events_per_time_bws)[1],9))# dim: pixels, heat wave cases
+events_per_pixel_bws <- sapply(1:9,function(y){sapply(1:years, function (x) {sum(events_per_time2_bws[(vecyears_ws[x]:(vecyears_ws[x+1]-1)),y])/area_size})}) # total yearly sum of compound events for all 9 cases, divided by total area
+
+# events_per_pixel_90_5 <- cbind(events_per_pixel[,5],events_per_pixel_b[,5])
+events_per_pixel_90_5 <- cbind(events_per_pixel_ws[,5],events_per_pixel_bws[,5],events_per_pixel[,5],events_per_pixel_b[,5])
+
+
+locat <- which(Koeppen@data@values==1)
+events_per_pixel_alt_ws <- pbsapply(locat,function(y){sapply(1:years, function (x) {sum(event_series_ws[y,(vecyears_ws[x]:(vecyears_ws[x+1]-1)),2,2])})}) # total yearly sum of compound events for 5-days 90th percentile (calculated from event_series not events_per_time as above to get sd)
+events_per_pixel_mean_ws <- apply(events_per_pixel_alt_ws,1,mean)
+events_per_pixel_median_ws <- apply(events_per_pixel_alt_ws,1,median)
+events_per_pixel_sd_ws <- apply(events_per_pixel_alt_ws,1,sd)
+events_per_pixel_iqr_ws <- apply(events_per_pixel_alt_ws,1,IQR) # interquartile range
+events_per_pixel_up_ws <- apply(events_per_pixel_alt_ws,1,quantile, 3/4) # interquartile range upper end
+events_per_pixel_low_ws <- apply(events_per_pixel_alt_ws,1,quantile, 1/4) # interquartile range lower end
+
+
+events_per_pixel_alt <- pbsapply(locat,function(y){sapply(1:years, function (x) {sum(event_series[y,(vecyears[x]:(vecyears[x+1]-1)),2,2])})}) # total yearly sum of compound events for 5-days 90th percentile (calculated from event_series not events_per_time as above to get sd); (alt for alternative calculation)
+events_per_pixel_mean <- apply(events_per_pixel_alt,1,mean)
+events_per_pixel_median <- apply(events_per_pixel_alt,1,median)
+events_per_pixel_sd <- apply(events_per_pixel_alt,1,sd)
+events_per_pixel_iqr <- apply(events_per_pixel_alt,1,IQR)
+events_per_pixel_up <- apply(events_per_pixel_alt,1,quantile, 3/4) # interquartile range upper end
+events_per_pixel_low <- apply(events_per_pixel_alt,1,quantile, 1/4) # interquartile range lower end
+```
+
+``` {r Boxplots, eval=T}
+# par(mfrow=c(2,1),oma=c(1,1,3,1))
+par(mfrow=c(2,2),oma=c(1,1,3,1))
+a <- sapply(1:2, function (x) {boxplot(events_per_pixel_90_5[1:20,x],events_per_pixel_90_5[21:40,x],ylab='Mean yearly number of compound events per pixel',main=paste0('5-Day ',' 90th Percentile'),col='lightblue')})
+mtext('Average yearly number of compound events per pixel', outer = TRUE, cex = 1.5)
+
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/boxplot_compound_2periods_SPI_warm_whole_seas.png",height=8,width=10,unit="cm",
+    pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+par(mfrow=c(1,1),oma=c(1,9,0,0))
+boxplot(events_per_pixel_90_5[21:40,3],events_per_pixel_90_5[1:20,3],events_per_pixel_90_5[21:40,1],events_per_pixel_90_5[1:20,1],
+        # ylab='Mean yearly number of compound events per pixel',
+        col=rev(c("SaddleBrown","SaddleBrown","ForestGreen","ForestGreen")), # main="5-Day 90th Perc.",
+        ## names=(c("1979 - 1998 SPI warm season","1999 - 2018 SPI warm season","1979 - 1998 SPEI warm season","1999 - 2018 SPEI warm season","1979 - 1998 SPI whole season","1999 - 2018 SPI whole season","1979 - 1998 SPEI whole season","1999 - 2018 SPEI whole season")),
+        # names=(rev(c("1979 - 1998 warm season \n compound events","1999 - 2018 warm season \n compound events","1979 - 1998 deseasonalised \n compound events","1999 - 2018 deseasonalised \n compound events"))),
+               las=1,horizontal=T,xaxt='n')
+axis(1,las=1,font=2,cex.axis=1)
+mtext('Average yearly number of compound events', cex = 1,side=1,line=2.5, font=2)
+mtext("1979 - 1998 warm season \n compound events", side=2, line=1, at=4, font=2, las=2)
+mtext("1999 - 2018 warm season \n compound events", side=2, line=1, at=3, font=2, las=2)
+mtext("1979 - 1998 deseasonalised \n compound events", side=2, line=1, at=2, font=2, las=2)
+mtext("1999 - 2018 deseasonalised \n compound events", side=2, line=1, at=1, font=2, las=2)
+dev.off()
+
+
+# Yearly boxplots ####
+
+# Change of intra-annual temporal distribution
+events_per_year <- matrix(events_per_time2[,5],nrow=184,ncol=40)
+boxplot(events_per_year)
+sapply(1:40,function(x){boxplot(events_per_time[vecyears[x]:(vecyears[x+1]-1),2,2],add=T)})
+```
+
+```{r cdfs, fig.height=10, fig.width=10}
+# xlabs <- c("Absolute extremes with SPI drought","Absolute extremes with SPEI drought","Relative  extremes with SPI drought","Relative extremes with SPEI drought")
+xlabs <- c("Average yearly number of compound events","","Average yearly number of compound events")
+main_cdf <- c("Warm season compound events","","Deseasonalised compound events")
+# xlabs <- c("Warm season SPI","Warm season SPEI","Whole season SPI","Whole season SPEI")
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/cdfs_compound_2periods_SPI_warm_whole_seas.png",height=6,width=10,unit="cm",
+    pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+par(mfrow=c(1,2),oma=c(1,1,0,1))
+a <- sapply(c(1,3), function (x) {plot.ecdf(events_per_pixel_90_5[21:years,x],verticals=T,col="sienna2", main=main_cdf[x], pch=15,
+                                            ylab='Cumulative probability',xlab=xlabs[x],xlim=c(0,max(events_per_pixel_90_5[,x])), las=1); plot.ecdf(events_per_pixel_90_5[1:20,x],verticals=T,add=T,col="blue",las=1);legend('bottomright',legend=c('1979 - 1998','1999 - 2018'),col=c("blue","sienna2"),lwd=2,cex=0.9,pch=c(1,15))}) # aggregated for each year
+# mtext('Mean yearly number of compound events per pixel', outer = TRUE, cex = 1.5)
+dev.off()
+```
+
+``` {r Time series plots, eval=T}
+
+# Theil-Sen slope
+x <- 1:40 # Years
+events_ws <- events_per_pixel_90_5[,1]
+events_ds <- events_per_pixel_90_5[,3]
+lm_events_sen_ws <- mblm(events_ws~x) # Theil-Sen slope
+lm_events_sen_ds <- mblm(events_ds~x) # Theil-Sen slope
+
+
+# calculate value - standard deviation and set it to zero if it is negative
+min_sd <- events_per_pixel_mean - events_per_pixel_sd
+min_sd <- ifelse(min_sd > 0, min_sd, 0)
+min_sd_ws <- events_per_pixel_mean_ws - events_per_pixel_sd_ws
+min_sd_ws <- ifelse(min_sd_ws > 0, min_sd_ws, 0)
+
+brown_transp <-  adjustcolor("SaddleBrown",alpha.f=0.2) 
+green_transp <-  adjustcolor("ForestGreen",alpha.f=0.2) 
+allyears <- 1979:2018
+placements <- 1:40
+lm_events <- lapply(1:4,function(x){lm(events_per_pixel_90_5[,x]~c(1:40))})
+colors <-c("ForestGreen","SaddleBrown")  # colors <- c("red","blue","tomato","cyan")
+# Revision
+predi_ws <- predict.lm(lm_events[[1]], newdata = data.frame(x=1:40), interval = 'confidence')
+predi_ds <- predict.lm(lm_events[[3]], newdata = data.frame(x=1:40), interval = 'confidence')
+
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/time_series_compound_2periods_SPI_warm_whole_seas.png",height=7,width=10,unit="cm", pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+# par(mfrow=c(1,1),oma=c(0,1,0,1.5)) # submitted version
+par(mfrow=c(1,1),oma=c(0,1,0,2)) # revised version
+a <- sapply(1,function(x){plot(events_per_pixel_90_5[,3],type='l',ylim=c(0,5),las=2,font=2,lwd=2,col='ForestGreen',xlab="",ylab="",xaxt="n",yaxt="n");lines(events_per_pixel_90_5[,1],lwd=2,col='SaddleBrown')})
+  # plot(events_per_pixel_90_5[,3],type='l',ylim=c(0,4),las=2,font=2,lwd=2,col='red',xlab="",ylab="",xaxt="n",yaxt="n");lines(events_per_pixel_90_5[,4],lwd=2,col='blue');lines(events_per_pixel_90_5[,1],lwd=2,col='tomato');lines(events_per_pixel_90_5[,2],lwd=2,col='cyan')}) # 1979 - 2018
+polygon(x=c(1:40,40:1),y=c(events_per_pixel_mean_ws + events_per_pixel_sd_ws,rev(min_sd_ws)),col=brown_transp, border=NA)
+polygon(x=c(1:40,40:1),y=c(events_per_pixel_mean + events_per_pixel_sd,rev(min_sd)),col=green_transp,border=NA)
+
+# Revision ####
+polygon(c(rev(1:40), 1:40), c(rev(predi_ws[ ,3]), predi_ws[ ,2]), col = brown_transp, border = NA)
+polygon(c(rev(1:40), 1:40), c(rev(predi_ws[ ,3]), predi_ds[ ,2]), col = green_transp, border = NA)
+####
+
+axis(1,at=placements,labels=allyears,font=2)
+axis(2,at=c(0,1,2,3,4,5),font=2,las=2)
+# mtext(expression(paste(bold('Temperature > 90'^'th'*' Percentile for > 5 days and SPI / SPEI < - 0.8'))), cex = 1.4,side=3)
+# expression(paste(bold('LAI (m'^'2'*'/m'^'2'*')')))
+mtext('Average yearly number\n of compound events', font=2, cex=1.2,line=2.2,side=2)
+mtext('Years', font=2, cex=1.2,line=2.5,side=1)
+## abline(lm_events[[1]],col=colors[3]);abline(lm_events[[2]],col=colors[4]);abline(lm_events[[3]],col=colors[1]);abline(lm_events[[4]],col=colors[2])
+# abline(lm_events[[1]],col=colors[2]);abline(lm_events[[3]],col=colors[1])
+lines(c(1,40),c(lm_events[[1]]$coefficients[1]+lm_events[[1]]$coefficients[[2]]*1,lm_events[[1]]$coefficients[1]+lm_events[[1]]$coefficients[[2]]*40),col=colors[2], lwd=2)
+lines(c(1,40),c(lm_events[[3]]$coefficients[1]+lm_events[[3]]$coefficients[[2]]*1,lm_events[[3]]$coefficients[1]+lm_events[[3]]$coefficients[[2]]*40),col=colors[1], lwd=2)
+# mtext(side=4,"3.54%", font=2, col="ForestGreen",cex=1.2,las=2,,line=0.4,at=1.1) # submitted version
+# mtext(side=4,"3.86%", font=2, col="SaddleBrown",cex=1.2,las=2,,line=0.4,at=1.35) # submitted version
+mtext(side=4,"3.54%/a", font=2, col="ForestGreen",cex=1.2,las=2,,line=0.4,at=1.1) # revised version
+mtext(side=4,"3.86%/a", font=2, col="SaddleBrown",cex=1.2,las=2,,line=0.4,at=1.35) # revised version
+
+# abline(lm_events_sen_ws,col='brown' ) # Theil-Sen slope
+# abline(lm_events_sen_ds,col='green' ) # Theil-Sen slope
+
+# Revised version
+abline(v=c(25,34,39), lwd=1.5, col="LightSlateGray")
+# legend('topleft',legend=c('Warm season compound events','Deseasonalised compound events'),col=c("SaddleBrown","ForestGreen"),lwd=2, cex=1.08,text.font=2)
+legend('topleft',legend=c('Warm season compound events','Deseasonalised compound events'),col=c("SaddleBrown","ForestGreen"),lwd=2, cex=1.06,text.font=2)
+
+dev.off ()
+
+
+# Time series and Boxplot combined
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/time_series_boxplot_compound_2periods_SPI_warm_whole_seas.png",
+    height=7,width=20,unit="cm", pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+  # time series without sd
+par(oma=c(1,1,0,1),mfrow=c(1,2),mar=c(3,15,0.5,1))
+# colors <-c("ForestGreen","SaddleBrown")  # colors <- c("red","blue","tomato","cyan")
+# a <- sapply(1,function(x){plot(events_per_pixel_90_5[,3],type='l',ylim=c(0,max(events_per_pixel_90_5[,c(1,3)])),las=2,font=2,lwd=2,col='ForestGreen',xlab="",ylab="",xaxt="n",yaxt="n");lines(events_per_pixel_90_5[,1],lwd=2,col='SaddleBrown')})
+# axis(1,at=placements,labels=allyears,font=2)
+# axis(2,at=c(0,1,2,3),font=2,las=2)
+# mtext('Average yearly number\n of compound events', font=2, cex=1.2,line=2.2,side=2)
+# mtext('Years', font=2, cex=1.2,line=2.5,side=1)
+# legend('topleft',legend=c('Deseasonalised compound events','Warm season compound events'),col=c("ForestGreen","SaddleBrown"),lwd=2,cex=0.8,text.font=2)
+# lines(c(1,40),c(lm_events[[1]]$coefficients[1]+lm_events[[1]]$coefficients[[2]]*1,lm_events[[1]]$coefficients[1]+lm_events[[1]]$coefficients[[2]]*40),col=colors[2], lwd=2)
+# lines(c(1,40),c(lm_events[[3]]$coefficients[1]+lm_events[[3]]$coefficients[[2]]*1,lm_events[[3]]$coefficients[1]+lm_events[[3]]$coefficients[[2]]*40),col=colors[1], lwd=2)
+# mtext("a)",side=2, font=2, cex=3, las=1, at=2.5, line=1.8)
+
+# time series with sd
+a <- sapply(1,function(x){plot(events_per_pixel_mean,type='l',ylim=c(0,5),las=2,font=2,lwd=2,col='ForestGreen',xlab="",ylab="",xaxt="n",yaxt="n");lines(events_per_pixel_mean_ws,lwd=2,col='SaddleBrown')})
+# lines(events_per_pixel_mean + events_per_pixel_sd, col='ForestGreen')
+# lines(min_sd, col='ForestGreen')
+# lines(events_per_pixel_mean_ws + events_per_pixel_sd_ws, col='SaddleBrown')
+# lines(min_sd_ws, col='SaddleBrown')
+polygon(x=c(1:40,40:1),y=c(events_per_pixel_mean_ws + events_per_pixel_sd_ws,rev(min_sd_ws)),col=brown_transp, border=NA)
+polygon(x=c(1:40,40:1),y=c(events_per_pixel_mean + events_per_pixel_sd,rev(min_sd)),col=green_transp,border=NA)
+axis(1,at=placements,labels=allyears,font=2)
+axis(2,at=c(0,1,2,3,4,5),font=2,las=2)
+mtext('Average yearly number\n of compound events', font=2, cex=1.2,line=2.2,side=2)
+mtext('Years', font=2, cex=1.2,line=2.5,side=1)
+legend('topleft',legend=c('Warm season compound events','Deseasonalised compound events'),col=c("SaddleBrown","ForestGreen"),lwd=2,cex=0.78,text.font=2)
+lines(c(1,40),c(lm_events[[1]]$coefficients[1]+lm_events[[1]]$coefficients[[2]]*1,lm_events[[1]]$coefficients[1]+lm_events[[1]]$coefficients[[2]]*40),col=colors[2], lwd=2)
+lines(c(1,40),c(lm_events[[3]]$coefficients[1]+lm_events[[3]]$coefficients[[2]]*1,lm_events[[3]]$coefficients[1]+lm_events[[3]]$coefficients[[2]]*40),col=colors[1], lwd=2)
+mtext(side=4,"3.54%", font=2, col="ForestGreen",cex=1.2,las=2,,line=0.4,at=1.1)
+mtext(side=4,"3.86%", font=2, col="SaddleBrown",cex=1.2,las=2,,line=0.4,at=1.35)
+mtext("a)",side=2, font=2, cex=3, las=1, at=4.95, line=1.8)
+  
+# Boxplot
+boxplot(events_per_pixel_90_5[21:40,3],events_per_pixel_90_5[1:20,3],events_per_pixel_90_5[21:40,1],events_per_pixel_90_5[1:20,1],
+          # ylab='Mean yearly number of compound events per pixel',
+          col=rev(c("SaddleBrown","SaddleBrown","ForestGreen","ForestGreen")),
+          las=1,horizontal=T, xaxt='n')
+  axis(1,las=1,font=2,cex.axis=1)
+  mtext('Average yearly number of compound events', cex = 1,side=1,line=2.5, font=2)
+  mtext("1979 - 1998 warm season \n compound events", side=2, line=1, at=4, font=2, las=2)
+  mtext("1999 - 2018 warm season \n compound events", side=2, line=1, at=3, font=2, las=2)
+  mtext("1979 - 1998 deseasonalised \n compound events", side=2, line=1, at=2, font=2, las=2)
+  mtext("1999 - 2018 deseasonalised \n compound events", side=2, line=1, at=1, font=2, las=2)
+  mtext("b)",side=2, font=2, cex=3, las=1, at=4.5, line=8.8)
+dev.off ()
+
+# ordered vertically, not horizontally (looks not so nice)
+# png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/time_series_compound_2periods_SPI_warm_whole_seas.png",height=7,width=10,unit="cm", pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+# par(oma=c(1,8,0,1),mfrow=c(2,1))
+# allyears <- 1979:2018
+# placements <- 1:40
+# lm_events <- lapply(1:4,function(x){lm(events_per_pixel_90_5[,x]~c(1:40))})
+# colors <-c("ForestGreen","SaddleBrown")  # colors <- c("red","blue","tomato","cyan")
+# a <- sapply(1,function(x){plot(events_per_pixel_90_5[,3],type='l',ylim=c(0,max(events_per_pixel_90_5[,c(1,3)])),las=2,font=2,lwd=2,col='ForestGreen',xlab="",ylab="",xaxt="n",yaxt="n");lines(events_per_pixel_90_5[,1],lwd=2,col='SaddleBrown')})
+# axis(1,at=placements,labels=allyears,font=2)
+# axis(2,at=c(0,1,2,3),font=2,las=2)
+# mtext('Average yearly number\n of compound events', font=2, cex=1.2,line=2.2,side=2)
+# mtext('Years', font=2, cex=1.2,line=2.5,side=1)
+# legend('topleft',legend=c('Deseasonalised compound events','Warm season compound events'),col=c("ForestGreen","SaddleBrown"),lwd=2,cex=1,text.font=2)
+# lines(c(1,40),c(lm_events[[1]]$coefficients[1]+lm_events[[1]]$coefficients[[2]]*1,lm_events[[1]]$coefficients[1]+lm_events[[1]]$coefficients[[2]]*40),col=colors[2], lwd=2)
+# lines(c(1,40),c(lm_events[[3]]$coefficients[1]+lm_events[[3]]$coefficients[[2]]*1,lm_events[[3]]$coefficients[1]+lm_events[[3]]$coefficients[[2]]*40),col=colors[1], lwd=2)
+# 
+# boxplot(events_per_pixel_90_5[21:40,3],events_per_pixel_90_5[1:20,3],events_per_pixel_90_5[21:40,1],events_per_pixel_90_5[1:20,1],
+#         # ylab='Mean yearly number of compound events per pixel',
+#         col=rev(c("SaddleBrown","SaddleBrown","ForestGreen","ForestGreen")), # main="5-Day 90th Perc.",
+#         # names=(c("1979 - 1998 SPI warm season","1999 - 2018 SPI warm season","1979 - 1998 SPEI warm season","1999 - 2018 SPEI warm season","1979 - 1998 SPI whole season","1999 - 2018 SPI whole season","1979 - 1998 SPEI whole season","1999 - 2018 SPEI whole season")),
+#         names=(rev(c("1979 - 1998 warm season \n compound events","1999 - 2018 warm season \n compound events","1979 - 1998 deseasonalised \n compound events","1999 - 2018 deseasonalised \n compound events"))),
+#                las=1,horizontal=T)#,xaxt='n')
+# mtext('Average yearly number of compound events', cex = 1,side=1,line=2.5)
+# dev.off ()
+
+
+
+
+
+
+# Plot as above with standard deviation / interquartile range
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/time_series_compound_2periods_SPI_warm_whole_seas_sd.png",height=7,width=10,unit="cm", pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+# png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/time_series_compound_2periods_SPI_warm_whole_seas_iqr.png",height=7,width=10,unit="cm", pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+par(mfrow=c(1,1),oma=c(0,1,0,0))
+a <- sapply(1,function(x){plot(events_per_pixel_mean,type='l',ylim=c(0,5),las=2,font=2,lwd=2,col='ForestGreen',xlab="",ylab="",xaxt="n",yaxt="n");lines(events_per_pixel_mean_ws,lwd=2,col='SaddleBrown')})
+# a <- sapply(1,function(x){plot(events_per_pixel_median,type='l',ylim=c(-1,5),las=2,font=2,lwd=2,col='ForestGreen',xlab="",ylab="",xaxt="n",yaxt="n");lines(events_per_pixel_median_ws,lwd=2,col='SaddleBrown')})
+
+
+lines(events_per_pixel_mean + events_per_pixel_sd, col='ForestGreen')
+lines(min_sd, col='ForestGreen')
+lines(events_per_pixel_mean_ws + events_per_pixel_sd_ws, col='SaddleBrown')
+lines(min_sd_ws, col='SaddleBrown')
+
+# lines(events_per_pixel_up, col='ForestGreen')
+# lines(events_per_pixel_low, col='ForestGreen')
+# lines(events_per_pixel_up_ws, col='SaddleBrown')
+# lines(events_per_pixel_low_ws, col='SaddleBrown')
+
+axis(1,at=placements,labels=allyears,font=2)
+axis(2,at=c(0,1,2,3,4,5),font=2,las=2)
+mtext('Average yearly number\n of compound events', font=2, cex=1.2,line=2.2,side=2)
+mtext('Years', font=2, cex=1.2,line=2.5,side=1)
+legend('topleft',legend=c('Deseasonalised compound events','Warm season compound events'),col=c("ForestGreen","SaddleBrown"),lwd=2,cex=1,text.font=2)
+lines(c(1,40),c(lm_events[[1]]$coefficients[1]+lm_events[[1]]$coefficients[[2]]*1,lm_events[[1]]$coefficients[1]+lm_events[[1]]$coefficients[[2]]*40),col=colors[2], lwd=2)
+lines(c(1,40),c(lm_events[[3]]$coefficients[1]+lm_events[[3]]$coefficients[[2]]*1,lm_events[[3]]$coefficients[1]+lm_events[[3]]$coefficients[[2]]*40),col=colors[1], lwd=2)
+text(x=30.8,y=1.33,"3.86%", font=2, col="SaddleBrown",cex=1.0)
+text(x=38.1,y=0.70,"3.54%", font=2, col="ForestGreen",cex=1.0)
+dev.off ()
+
+yearly_change_rate <- c(lm_events[[1]]$coefficients[2],lm_events[[3]]$coefficients[2]) # for warm season and deseasonalised events
+forty_year_change_rate <- c(lm_events[[1]]$coefficients[2],lm_events[[3]]$coefficients[2])*40
+# Annual growth rate in percent
+start_ws <- lm_events[[1]]$coefficients[1]+lm_events[[1]]$coefficients[[2]]*1
+end_ws <- lm_events[[1]]$coefficients[1]+lm_events[[1]]$coefficients[[2]]*40
+start_ds <- lm_events[[3]]$coefficients[1]+lm_events[[3]]$coefficients[[2]]*1
+end_ds <- lm_events[[3]]$coefficients[1]+lm_events[[3]]$coefficients[[2]]*40
+yearly_change_rate_perc <- c(((end_ws / start_ws) ^ (1/40) - 1) * 100, ((end_ds / start_ds) ^ (1/40) - 1) * 100)
+forty_year_change_rate_perc <-  c(((end_ws) - (start_ws)) / (start_ws), ((end_ds) - (start_ds)) / (start_ds)) * 100
+
+
+# 9 cases plot
+slopes_ws <- vector(mode="numeric",length=9)
+slopes <- vector(mode="numeric",length=9)
+lm_curr_case_ws <- vector(mode="list",length=9)
+lm_curr_case <- vector(mode="list",length=9)
+for (i in c(9:1)){
+  lm_curr_case_ws[[i]] <- lm(events_per_pixel_ws[,i]~c(1:40))
+  slopes_ws[i] <- lm_curr_case_ws[[i]]$coefficients[2]
+  lm_curr_case[[i]] <- lm(events_per_pixel[,i]~c(1:40))
+  slopes[i] <- lm_curr_case[[i]]$coefficients[2]
+  # abline(lm_curr_case,col=colors[i])
+}
+thenames <- sapply(9:1, function (x) {paste0(dur_vec[x],'-Day ',per_vec[x],'th Percentile')})
+
+# thenames <- sapply(9:1, function (x) {bquote(.(dur_vec[1])~'- Day ' ~ .(per_vec[1])^th ~ 'Percentile')}) # does not work well with barplot unfortunately
+
+# par(mfrow=c(1,1),oma=c(0,5.5,0,1),mfrow=c(1,2),mar=c(7, 4, 4, 0))
+# barplot(slopes_ws*40,horiz=T,xlab="Change in number of compound \n events from 1979 - 2018",names=thenames,las=1,col="darkblue", main="Warm season \n compound events")
+# barplot(slopes*40,horiz=T,xlab="Change in number of compound \n events from 1979 - 2018",las=1,col="darkblue", main="Deseasonalised \n compound events")
+
+slopes_both_seasons <- rbind(slopes_ws,slopes)
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/time_series_compound_increase_9_cases_SPI.png",height=8,width=10,unit="cm",pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+par(mfrow=c(1,1),oma=c(0,5.5,0,1))
+barplot(slopes_both_seasons*40,horiz=T,xlab="Change in number of compound events from 1979 - 2018",names.arg=thenames,las=1, beside=T, col=c("darkblue","DeepSkyBlue1"))
+legend(x="topright",legend=c("Warm season compound events","Deseasonalised compound events"),pch=15,col=c("darkblue","DeepSkyBlue1"))
+dev.off ()
+
+
+# Percentage change plots 
+perc_increase_ws <- sapply(9:1, function(x) (((lm_curr_case_ws[[x]]$coefficients[1]+lm_curr_case_ws[[x]]$coefficients[[2]]*40) / (lm_curr_case_ws[[x]]$coefficients[1]+lm_curr_case_ws[[x]]$coefficients[[2]]*1)) ^(1/40) - 1) * 100 )
+perc_increase <- sapply(9:1, function(x) (((lm_curr_case[[x]]$coefficients[1]+lm_curr_case[[x]]$coefficients[[2]]*40) / (lm_curr_case[[x]]$coefficients[1]+lm_curr_case[[x]]$coefficients[[2]]*1)) ^(1/40) - 1) * 100 )
+# wrong calculation
+# perc_increase_ws <- sapply(9:1, function(x) (lm_curr_case_ws[[x]]$coefficients[1]+lm_curr_case_ws[[x]]$coefficients[[2]]*40)/(lm_curr_case_ws[[x]]$coefficients[1]+lm_curr_case_ws[[x]]$coefficients[[2]]*1)/40)
+# perc_increase <- sapply(9:1, function(x) (lm_curr_case[[x]]$coefficients[1]+lm_curr_case[[x]]$coefficients[[2]]*40)/(lm_curr_case[[x]]$coefficients[1]+lm_curr_case[[x]]$coefficients[[2]]*1)/40)
+perc_increase_both_seasons <- rbind(perc_increase,perc_increase_ws) # reversed order because of horizontal barplot
+
+# par(mfrow=c(1,1),oma=c(0,5.5,0,1),mfrow=c(1,2),mar=c(7, 4, 4, 0))
+# barplot(perc_increase_ws*100,horiz=T,xlab="Yearly percentage change in \n number of compound events",names=thenames,las=1,col="darkblue", main="Warm season \n compound events")
+# barplot(perc_increase*100,horiz=T,xlab="Yearly percentage change in \n number of compound events", names="", las=1,col="darkblue", main="Deseasonalised \n compound events")
+
+thenames[5] <- "" # is placed separately in bold using mtext
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/barplot_compound_increase_9_cases_SPI_percentage.png",height=8,width=10,unit="cm",pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+par(mfrow=c(1,1),oma=c(0,5.5,0,1))
+barplot(perc_increase_both_seasons,horiz=T,xlab="Yearly percentage change rate in number of compound events",names.arg=thenames, las=1, beside=T, col=c("ForestGreen","SaddleBrown"))
+mtext("5-Day 90th Percentile",side=2,line=0.65, font=2, las=2)
+legend(x="topright",legend=c("Warm season compound events","Deseasonalised compound events"),pch=15,col=c("SaddleBrown","ForestGreen"))
+dev.off ()
+
+
+# Revision
+pe_vec <- rep(c(1,3,6),3)
+int_vec <- c(rep(-0.5,3),rep(-0.8,3),rep(-1.5,3))
+thenames <- sapply(9:1, function (x) {paste0(pe_vec[x],'-Month, ',int_vec[x],' Intensity')})
+thenames[5] <- "" # is placed separately in bold using mtext
+
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/barplot_compound_increase_9_cases_SPI_percentage_multiple_droughts.png",height=8,width=10,unit="cm",pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+par(mfrow=c(1,1),oma=c(0,5.5,0,1), xpd=TRUE)
+barplot(perc_increase_both_seasons,horiz=T,xlab="Yearly percentage change rate in number of compound events",names.arg=thenames, las=1, beside=T, col=c("ForestGreen","SaddleBrown"))
+# mtext("5-Day 90th Percentile",side=2,line=0.65, font=2, las=2)
+mtext("3-Month, -0.8 Intensity",side=2,line=0.65, font=2, las=2)
+legend(x=0 , y=32, legend=c("Warm season compound events","Deseasonalised compound events"),pch=15,col=c("SaddleBrown","ForestGreen"), cex= 1)
+dev.off ()
+
+
+```
+
+``` {r Ordered barplots, eval=T}
+# Events ####
+events_per_pixel_90_5_table <- cbind(events_per_pixel_90_5,1979:2018)
+# ordered table
+SPI.dt_ws <- data.table(events_per_pixel_90_5_table,key="V1") 
+SPEI.dt_ws <- data.table(events_per_pixel_90_5_table,key="V2")
+SPI.dt <- data.table(events_per_pixel_90_5_table,key="V3") 
+SPEI.dt <- data.table(events_per_pixel_90_5_table,key="V4")
+
+xpos<-barplot(SPI.dt_ws$V1,horiz=T,xlab=("Average number of events per pixel"),ylab=("Years"),cex.names  = 2,col="brown",yaxt="n",cex.lab=1.5)
+axis(2,at=xpos,labels=SPI.dt$V5,las=2)
+
+xpos<-barplot(SPEI.dt_ws$V2,horiz=T,xlab=("Average number of events per pixel"),ylab=("Years"),cex.names  = 2,col="brown",yaxt="n",cex.lab=1.5)
+axis(2,at=xpos,labels=SPEI.dt$V5,las=2)
+
+xpos<-barplot(SPI.dt$V3,horiz=T,xlab=("Average number of events per pixel"),ylab=("Years"),cex.names  = 2,col="brown",yaxt="n",cex.lab=1.5)
+axis(2,at=xpos,labels=SPI.dt$V5,las=2)
+
+xpos<-barplot(SPEI.dt$V4,horiz=T,xlab=("Average number of events per pixel"),ylab=("Years"),cex.names  = 2,col="brown",yaxt="n",cex.lab=1.5)
+axis(2,at=xpos,labels=SPEI.dt$V5,las=2)
+
+# Years ####
+load("./Workspaces/yearly_temp_prec_79-18.RData") # from 9-Felder-Plot.R
+
+temp_warm_season <- data.table(yearly_temp_prec,key = "yearly_temp_warm")
+xpos<-barplot(temp_warm_season$yearly_temp_warm,horiz=T,xlab=("Average temperature"),ylab=("Years"),cex.names  = 2,col="brown",yaxt="n",cex.lab=1.5,xlim=c(294,298),xpd=F)
+axis(2,at=xpos,labels=temp_warm_season$V5,las=2)
+
+prec_warm_season <- data.table(yearly_temp_prec,key = "yearly_prec_warm")
+xpos<-barplot(prec_warm_season$yearly_prec_warm[40:1],horiz=T,xlab=("Average precipitation"),ylab=("Years"),cex.names  = 2,col="brown",yaxt="n",cex.lab=1.5,xpd=F)
+axis(2,at=xpos,labels=prec_warm_season$V5[40:1],las=2)
+
+temp_whole_season <- data.table(yearly_temp_prec,key = "yearly_temp")
+xpos<-barplot(temp_whole_season$yearly_temp,horiz=T,xlab=("Average temperature"),ylab=("Years"),cex.names  = 2,col="brown",yaxt="n",cex.lab=1.5,xlim=c(290,294),xpd=F)
+axis(2,at=xpos,labels=temp_whole_season$V5,las=2)
+
+prec_whole_season <- data.table(yearly_temp_prec,key = "yearly_prec")
+xpos<-barplot(prec_whole_season$yearly_prec[40:1],horiz=T,xlab=("Average precipitation"),ylab=("Years"),cex.names  = 2,col="brown",yaxt="n",cex.lab=1.5,xpd=F)
+axis(2,at=xpos,labels=prec_whole_season$V5[40:1],las=2)
+
+# year 2017 is hottest and second driest year
+
+
+# Comparison of yearly averages with number of events ####
+
+# Barplots are inconvenient and give little info, make a scatter plot: yearly values vs events
+plot(events_per_pixel_90_5[,1],yearly_temp_prec[,1],xlab="Events SPI warm season",ylab="Mean yearly maximum temperature")
+text(events_per_pixel_90_5[,1],yearly_temp_prec[,1]+0.004,labels=yearly_temp_prec[,5],cex=0.9,font=2)
+# for some years, temperature and events are not so linked, e.g. 2003/2018
+plot(events_per_pixel_90_5[,2],yearly_temp_prec[,1],xlab="Events SPEI warm season",ylab="Mean yearly maximum temperature") # closely related to SPEI
+plot(events_per_pixel_90_5[,1],yearly_temp_prec[,2],xlab="Events SPI warm season",ylab="Mean warm season maximum temperature")
+plot(events_per_pixel_90_5[,2],yearly_temp_prec[,2],xlab="Events SPEI warm season",ylab="Mean warm season maximum temperature")
+# even closer relationship in summer
+
+# Yearly precipitation and compound events
+plot(events_per_pixel_90_5[,1],yearly_temp_prec[,3],xlab="Events SPI warm season",ylab="Yearly precipitation sum")
+text(events_per_pixel_90_5[,1],yearly_temp_prec[,3]+0.004,labels=yearly_temp_prec[,5],cex=0.9,font=2)
+plot(events_per_pixel_90_5[,2],yearly_temp_prec[,3],xlab="Events SPEI warm season",ylab="Yearly precipitation sum")
+# Little correlation (as expected)
+plot(events_per_pixel_90_5[,1],yearly_temp_prec[,4],xlab="Events SPI warm season",ylab="Warm season precipitation sum")
+plot(events_per_pixel_90_5[,2],yearly_temp_prec[,4],xlab="Events SPEI warm season",ylab="Warm season precipitation sum")
+
+
+# Scatterplots
+# for each year, the number of events for warm/whole SPI/SPEI
+# png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/scatter_plot_compound_SPI_SPEI_warm_whole_seas.png",height=8,width=10,unit="cm",
+#     pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+# par(mfrow=c(2,1),oma=c(0,0,0,0),mar=c(4,5,1.5,0))
+# plot(events_per_pixel_90_5[,1],events_per_pixel_90_5[,2],xlab="Absolute extremes\n with SPI drought", ylab="Absolute extremes \n with SPEI drought",cex=0.4,pch=20)
+# text(events_per_pixel_90_5[,1],events_per_pixel_90_5[,2]+0.08,labels=1979:2018,cex=0.4,font=2)
+# plot(events_per_pixel_90_5[,3],events_per_pixel_90_5[,4],xlab="Relative extremes \n with SPI drought", ylab="Relative extremes \n with SPEI drought",cex=0.4,pch=20)
+# text(events_per_pixel_90_5[,3],events_per_pixel_90_5[,4]+0.08,labels=1979:2018,cex=0.4,font=2)
+# dev.off()
+
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/scatter_plot_compound_SPI_warm_whole_seas.png",height=8,width=10,unit="cm",
+    pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+par(mfrow=c(1,1),oma=c(0,0,0,0),mar=c(4,5,1.5,1))
+plot(events_per_pixel_90_5[,1],events_per_pixel_90_5[,3],xlab="Warm season compound events", ylab="Deseasonalised compound events",cex=0.4,pch=20)
+text(events_per_pixel_90_5[,1],events_per_pixel_90_5[,3]+0.06,labels=1979:2018,cex=0.4,font=2)
+dev.off()
+
+plot(events_per_pixel_90_5[,1],events_per_pixel_90_5[,3],xlab="Warm season SPI", ylab="Whole season SPI")
+text(events_per_pixel_90_5[,1],events_per_pixel_90_5[,3]+0.08,labels=1979:2018,cex=0.9,font=2)
+plot(events_per_pixel_90_5[,2],events_per_pixel_90_5[,4],xlab="Warm season SPEI", ylab="Whole season SPEI")
+text(events_per_pixel_90_5[,2],events_per_pixel_90_5[,4]+0.08,labels=1979:2018,cex=0.9,font=2)
+```
+
+``` {r Monthly results, eval=T}
+message('Load workspaces individually for this section')
+
+allyears <- 1979:2018
+area_size <- length(which(Koeppen@data@values==1))
+
+start_dates_year <- c(1,end_dates_year[1:39]+1)
+for (i in 1:40) {year_vect[start_dates_year[i]:end_dates_year[i]] <- allyears[i]}
+
+month_names <- unique(months_40years)
+month_names2 <- rep(month_names_plot,each=2)
+month_names2[seq(1,length(month_names2)-1,by=2)] <- paste(month_names2[seq(1,length(month_names2)-1,by=2)],"1st period")
+month_names2[seq(2,length(month_names2),by=2)] <- paste(month_names2[seq(2,length(month_names2),by=2)],"2nd period")
+
+
+events_90_5 <- events_per_time[,2,2] # 90th percentile, 5 days
+events_and_dates <- data.frame('Data'= events_90_5,'Month' = month_vect,'Year'= year_vect) # add info about month and year for each time step
+events_sorted_monthly <- lapply(1:length(month_names),function(x){filter(events_and_dates, Month == month_names[x])})
+events_per_pixel_yearly_all_months <- lapply(1:length(month_names),function(x){tapply(events_sorted_monthly[[x]]$Data,events_sorted_monthly[[x]]$Year,sum)/area_size}) # Sums for each year and each month
+yearly_events_all_months <- unlist(events_per_pixel_yearly_all_months)
+yearly_events_all_months <- matrix(yearly_events_all_months,nrow=40,ncol=length(month_names))
+# reshape it, so that the first period and second period are in a column next to each other for all months
+yearly_events_all_months_both_periods <- matrix(yearly_events_all_months,nrow=20,ncol=2*length(month_names))
+yearly_events_all_months <- unlist(events_per_pixel_yearly_all_months)
+yearly_events_all_months <- matrix(yearly_events_all_months,nrow=40,ncol=length(month_names))
+# reshape it, so that the first period and second period are in a column next to each other for all months
+yearly_events_all_months_both_periods <- matrix(yearly_events_all_months,nrow=20,ncol=2*length(month_names))
+
+event_per_pixel_whole_time_all_months <- tapply(X = events_and_dates[,1],INDEX = events_and_dates[,2],FUN = sum) / area_size / years
+event_per_pixel_whole_time_all_months_1stP <- tapply(X = events_and_dates[1:(length(year_vect)/2),1],INDEX = events_and_dates[1:(length(year_vect)/2),2],FUN = sum) / area_size/(years/2)
+event_per_pixel_whole_time_all_months_2ndP <- tapply(X = events_and_dates[(length(year_vect)/2+1):length(year_vect),1],INDEX = events_and_dates[(length(year_vect)/2+1):length(year_vect),2],FUN = sum) / area_size/(years/2)
+
+colors <- rainbow(12)
+slopes_monthly <- vector(mode="numeric",length=length(unique(months_40years)))
+plot(x=1979:2018,y=seq(0,2,length.out=40),type='n',xlab="Years",ylab="Average number of events per pixel")
+for (i in c(1:length(unique(months_40years)))){
+  curr_month <- filter(events_and_dates, Month == months_40years[i])
+  sum_curr_month <- tapply(curr_month$Data,curr_month$Year,sum)/area_size
+  lines(x=1979:2018,y=sum_curr_month,col=colors[i])
+  lm_curr_month <- lm(sum_curr_month~c(1979:2018))
+  slopes_monthly[i] <- lm_curr_month$coefficients[2]
+  abline(lm_curr_month,col=colors[i])
+}
+
+# Spatial plots for each month
+event_series_90_5  <- data.frame('Data'= t(event_series[,,2,2]),'Month' = month_vect,'Year'= year_vect) # add column with dates; SPI
+# event_series_90_5  <- data.frame('Data'= t(event_series_b[,,2,2]),'Month' = month_vect,'Year'= year_vect) # add column with dates; SPEI
+all_months <- lapply(1:length(month_names),function(x){filter(event_series_90_5, Month == month_names[x])})
+
+# (sum_2nd_period-sum_1stperiod)/sum_whole_period for all pixels
+fraction_per_pixel <- lapply(1:length(month_names),function(x){(apply(all_months[[x]][(dim(all_months[[x]])[1]/2+1):dim(all_months[[x]])[1],1:length(coord[,1])],2,sum) - apply(all_months[[x]][1:(dim(all_months[[x]])[1]/2),1:length(coord[,1])],2,sum))/apply(all_months[[x]][,1:length(coord[,1])],2,sum)})
+# sum(is.nan(test7[[4]])): many pixels without events outside the Mediterranean
+
+# attach coordinates
+dat_fraction_per_pixel <-  lapply(1:length(month_names),function(x){cbind(coord,fraction_per_pixel[[x]])})
+# convert to raster
+datras_fraction_per_pixel <-  lapply(dat_fraction_per_pixel,rasterFromXYZ)
+med_extent <- c(-9.625,40.125,30.375,45.125)
+datras_fraction_per_pixel <- lapply(datras_fraction_per_pixel,function(x){crop(x,med_extent)})
+# transform lists to bricks (easier to handle)
+brick_fraction_per_pixel <-  brick(datras_fraction_per_pixel)
+stack_fraction_per_pixel <-  stack(datras_fraction_per_pixel)
+
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/Event_number_first_second_and_both_periods_ws.png",height=8,width=10,unit="cm",pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+# png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/Event_number_first_second_and_both_periods.png",height=8,width=10,unit="cm",pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+plot(event_per_pixel_whole_time_all_months,col='purple',ylim=c(0,max(event_per_pixel_whole_time_all_months_2ndP)),xlab="Months",ylab="Average number of events per pixel from 1979 to 2018 for each month",xaxt='n')
+points(event_per_pixel_whole_time_all_months_1stP,col='green')
+points(event_per_pixel_whole_time_all_months_2ndP,col='blue')
+legend('topleft',legend=c('1979 - 2018','1979 - 1998','1999 - 2018'),col=c('purple',"green","blue"),lwd=2,cex=0.8)
+mtext(c("May","June","July","August","September","October"), side=1, line=1, at=c(1,2,3,4,5,6), font=2)
+# mtext(c("January","Feburary","March","April","May","June","July","August","September","October","November","December"), side=1, line=1, at=c(1,2,3,4,5,6,7,8,9,10,11,12), font=2)
+dev.off()
+
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/Monthly_change_over_time_ws.png",height=8,width=10,unit="cm",pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+# png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/Monthly_change_over_time.png",height=8,width=10,unit="cm",pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+barplot(slopes_monthly*years,xlab="Months",ylab="Change in number of compound events from 1979 - 2018",names=month_names_plot,col="lightblue") # Slope over the 40 years for each month
+dev.off()
+
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/Monthly_change_betweeen_periods_ws.png",height=8,width=10,unit="cm",  pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+# png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/Monthly_change_betweeen_periods.png",height=8,width=10,unit="cm",  pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+plot(event_per_pixel_whole_time_all_months_2ndP/event_per_pixel_whole_time_all_months_1stP,xlab="Months",ylab="Percentage change of average number of events per pixel between 1979 - 1998 and 1999 - 2018") # change from first to second period
+dev.off()
+
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/Monthly_boxplots_ws.png",height=8,width=10,unit="cm",pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+# png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/Monthly_boxplots.png",height=8,width=10,unit="cm",pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+par(mfrow=c(1,1),oma=c(4,0,0.5,1), mar=c(4.5, 6, 0, 2))
+boxplot(yearly_events_all_months_both_periods, ylab="Distribution of events from 1979 - 1998 \n and 1999 - 2018 for each month",names=month_names2,las=2)
+dev.off()
+
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/Monthly_maps_of_events_ws.png",height=8,width=10,unit="cm",pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+# png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/Monthly_maps_of_events.png",height=8,width=13,unit="cm",pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+# par(mfrow=plotwindow,oma=c(1,1,1,5))
+# a <-  lapply(1:length(month_names),function(x){plot(datras_fraction_per_pixel [[x]],zlim=c(min(brick_fraction_per_pixel@data@min),max(brick_fraction_per_pixel@data@max)),main=month_names[x]);plot(border,col='transparent', border='black',add=TRUE)})
+
+myThemelow <- colorRampPalette(c(viridis::viridis(9, direction = 1)[1:4], "cadetblue3", "white"))(100)
+myThemeup <- colorRampPalette(c("white","gold2", "orangered3", "orangered4"))(100)
+myTheme <- rasterTheme(region=c(myThemelow,myThemeup))
+# myTheme <- rasterTheme(region = c( "#6371AF", "#959CC3","#E2E6BD" ,"#E5D961" , "#E9B62D" ,"#EAA428" # blue to yellow to red
+                                  # ,"#E89132"  ,"#E06B50" ,"#D33F6A"))
+myTheme$panel.background$col = 'gray97' # NA values
+p.strip <- list(cex=0.7, lines=1, font=2) # subplot titles
+my.at <- seq(min(brick_fraction_per_pixel@data@min),max(brick_fraction_per_pixel@data@max),0.25)
+my.at2 <- seq(min(brick_fraction_per_pixel@data@min),max(brick_fraction_per_pixel@data@max),0.05)
+my.labels <- paste0(seq(min(brick_fraction_per_pixel@data@min),max(brick_fraction_per_pixel@data@max),0.25))
+myColorkey <- list(at=my.at2, # where the colors change
+                   labels=list(
+                     labels=my.labels, # label names
+                     at=my.at, # where to print labels
+                     cex=1, font=2),
+                   height=0.85, width=1.4#,
+                   )
+par(oma=c(5,1,5,1),mar=c(5,1,5,1))
+levelplot(stack_fraction_per_pixel,between=list(x=0.5,y=0.5),par.settings=myTheme,names.attr=month_names_plot,
+          par.strip.text=p.strip,
+          scales=list(draw=FALSE),
+          at=my.at2, colorkey=myColorkey, fontface=2, asp=1)+
+  layer(sp.polygons(border,col='black',lwd=0.5))+
+  layer(sp.polygons(ocean,fill='lightblue',col='black')
+  ) #  pixel overlapping into the sea are covered
+dev.off()
+```
+
+``` {r Monthly results (both months), eval=T}
+month_vect_bs <- vector(mode='character',length=14610)
+year_vect_bs <- vector(mode='character',length=14610)
+month_vect_ws <- vector(mode='character',length=7360)
+year_vect_ws <- vector(mode='character',length=7360)
+
+end_dates_month_bs <- cumsum(month_lengths) # last day of each month
+start_dates_month_bs <- c(1,end_dates_month_bs[1:479]+1) # first day of each month
+months_40years_bs <- rep(c("01_Jan","02_Feb","03_Mar","04_Apr","05_May","06_Jun","07_Jul","08_Aug","09_Sep","10_Oct","11_Nov","12_Dec"),40)
+for (i in 1:480) {month_vect_bs[start_dates_month_bs[i]:end_dates_month_bs[i]] <- months_40years_bs[i]}
+
+end_dates_month_ws <- cumsum(month_lengths_ws) # last day of each month
+start_dates_month_ws <- c(1,end_dates_month_ws[1:239]+1) # first day of each month
+months_40years_ws <- rep(c("05_May","06_Jun","07_Jul","08_Aug","09_Sep","10_Oct"),40)
+for (i in 1:240) {month_vect_ws[start_dates_month_ws[i]:end_dates_month[i]] <- months_40years_ws[i]}
+
+end_dates_year_ws <- cumsum(rep(184,40)[1:years])
+start_dates_year_ws <- c(1,end_dates_year_ws[1:39]+1)
+for (i in 1:40) {year_vect_ws[start_dates_year_ws[i]:end_dates_year_ws[i]] <- allyears[i]}
+
+end_dates_year_bs <- cumsum(rep(c(365,366,365,365),10)[1:years])
+start_dates_year_bs <- c(1,end_dates_year_bs[1:39]+1)
+for (i in 1:40) {year_vect_bs[start_dates_year_bs[i]:end_dates_year_bs[i]] <- allyears[i]}
+
+events_90_5_ws <- events_per_time_ws[,2,2] # 90th percentile, 5 days
+events_90_5 <- events_per_time[,2,2] # 90th percentile, 5 days
+# ws_na <- rep(NA,7250)
+# events_90_5_ws2 <- 
+events_and_dates_ws <- data.frame('Warm_season'= events_90_5_ws,'Month' = month_vect_ws,'Year'= year_vect_ws) # add info about month and year for each time step
+events_and_dates <- data.frame('Deseasonalised'= events_90_5,'Month' = month_vect_bs,'Year'= year_vect_bs) # add info about month and year for each time step
+
+events_month_ws <- t(tapply(events_and_dates_ws$Warm_season, list(events_and_dates_ws$Month, events_and_dates_ws$Year),sum)/area_size)
+events_month <- t(tapply(events_and_dates$Deseasonalised, list(events_and_dates$Month, events_and_dates$Year),sum)/area_size)
+
+ggcorrplot(cor(events_month_ws))
+ggcorrplot(cor(events_month))
+corrplot(cor(events_month))
+png(filename="D:/user/vogelj/compound_events_mediterran/Output/correlation_matrix_monthly.png")
+  ggcorrplot(cor(events_month))
+dev.off()
+
+events_month_mixed_all <- cbind(events_month, events_month_ws)
+colnames(events_month_mixed_all) <- c("Jan (des)", "Feb (des)", "Mar (des)", "Apr (des)", "May (des)", "Jun (des)", "Jul (des)", "Aug (des)", "Sep (des)", "Oct (des)", "Nov (des)", "Dec (des)", "May (ws)", "Jun (ws)", "Jul (ws)", "Aug (ws)", "Sep (ws)", "Oct (ws)")
+png(filename="D:/user/vogelj/compound_events_mediterran/Output/correlation_matrix_monthly_both.png")
+  ggcorrplot(cor(events_month_mixed_all))
+dev.off()
+# 1979 - 1998
+png(filename="D:/user/vogelj/compound_events_mediterran/Output/correlation_matrix_monthly_both_79_98.png")
+  ggcorrplot(cor(events_month_mixed_all[1:20,]))
+dev.off()
+# 1999 - 2018
+png(filename="D:/user/vogelj/compound_events_mediterran/Output/correlation_matrix_monthly_both_99_18.png")
+  ggcorrplot(cor(events_month_mixed_all[21:40,]))
+dev.off()
+
+# colors <- rainbow(12)
+slopes_monthly <- vector(mode="numeric",length=length(unique(months_40years_bs)))
+lm_curr_month <- vector("list",length=length(unique(months_40years_bs)))
+# plot(x=1979:2018,y=seq(0,2,length.out=40),type='n',xlab="Years",ylab="Average number of events per pixel")
+for (i in c(1:length(unique(months_40years_bs)))){
+  curr_month <- filter(events_and_dates, Month == months_40years_bs[i])
+  sum_curr_month <- tapply(curr_month$Deseasonalised,curr_month$Year,sum)/area_size
+  # lines(x=1979:2018,y=sum_curr_month,col=colors[i])
+  lm_curr_month[[i]] <- lm(sum_curr_month~c(1:40))
+  slopes_monthly[i] <- lm_curr_month[[i]]$coefficients[2]
+  # abline(lm_curr_month[[i]],col=colors[i])
+}
+slopes_monthly_ws <- vector(mode="numeric",length=length(unique(months_40years_ws)))
+lm_curr_month_ws <- vector("list",length=length(unique(months_40years_ws)))
+for (i in c(1:length(unique(months_40years_ws)))){
+  curr_month_ws <- filter(events_and_dates_ws, Month == months_40years_ws[i])
+  sum_curr_month_ws <- tapply(curr_month_ws$Warm_season,curr_month_ws$Year,sum)/area_size
+  lm_curr_month_ws[[i]] <- lm(sum_curr_month_ws~c(1:40))
+  slopes_monthly_ws[i] <- lm_curr_month_ws[[i]]$coefficients[2]
+}
+slopes_monthly_ws12 <- c(rep(NA,4),slopes_monthly_ws,rep(NA,2))
+
+slopes_monthly_both_seasons <- rbind(slopes_monthly_ws12,slopes_monthly)
+month_names_plot_ws <- c("May","Jun","Jul","Aug","Sep","Oct")
+month_names_plot <- c("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/Monthly_change_over_time_both_seasons.png",height=8,width=10,unit="cm",pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+par(mar=c(5, 5, 4, 2))
+barplot(slopes_monthly_both_seasons*years,xlab="Months",ylab="Change in number of compound \n events from 1979 - 2018",names=month_names_plot,col=c("darkblue","DeepSkyBlue1"), beside=T) # Slope over the 40 years for each month
+legend(x="topleft",legend=c("Warm season compound events","Deseasonalised compound events"),pch=15,col=c("darkblue","DeepSkyBlue1"))
+dev.off()
+
+
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/Monthly_change_over_time_both_seasons_v2.png",height=5,width=11,unit="cm",pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+par(mfrow=c(1,2),mar=c(5, 5, 4, 2))
+barplot(slopes_monthly_ws*years,xlab="Months",ylab="Change in number of compound \n events from 1979 - 2018", names=month_names_plot_ws,col="SaddleBrown", las=1, main="Warm season compound events") # Slope over the 40 years for each month
+barplot(slopes_monthly*years,xlab="Months",ylab="Change in number of compound \n events from 1979 - 2018", names=month_names_plot,col="ForestGreen", las=1, main="Deseasonalised compound events") # Slope over the 40 years for each month
+dev.off()
+save(slopes_monthly,slopes_monthly_ws,file = "D:/user/vogelj/compound_events_mediterran/Output/all_slopes_monthly_compounds.RData")
+
+
+# Percentage plots
+message("You cannot assign percentage change meaningfully because the linear model is unsuitable as it gives negative values in 2 cases (i.e. you start at an event number below 0).")
+# perc_increase_month_ws <- sapply(1:length(unique(months_40years_ws)), function(x) (lm_curr_month_ws[[x]]$coefficients[1]+lm_curr_month_ws[[x]]$coefficients[[2]]*40)/(lm_curr_month_ws[[x]]$coefficients[1]+lm_curr_month_ws[[x]]$coefficients[[2]]*1)/40)
+# perc_increase_month <- sapply(1:length(unique(months_40years_bs)), function(x) (lm_curr_month[[x]]$coefficients[1]+lm_curr_month[[x]]$coefficients[[2]]*40)/(lm_curr_month[[x]]$coefficients[1]+lm_curr_month[[x]]$coefficients[[2]]*1)/40)
+# perc_increase_month_ws12 <- c(rep(NA,4),perc_increase_month_ws,rep(NA,2))
+# perc_increase_month_both_seasons <- rbind(perc_increase_month_ws12,perc_increase_month)
+# 
+# png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/Monthly_change_over_time_both_seasons_percentage.png",height=8,width=10,unit="cm",pointsize = 6, bg = "white", res = 2000, restoreConsole = TRUE, type = "windows")
+# par(mfrow=c(1,1),oma=c(0,5.5,0,1))
+# barplot(perc_increase_month_both_seasons*100,horiz=F,xlab="Yearly percentage change in number of compound events", names= month_names_plot, las=1, beside=T, col=c("darkblue","DeepSkyBlue1"))
+# legend(x="bottomleft",legend=c("Warm season compound events","Deseasonalised compound events"),pch=15,col=c("darkblue","DeepSkyBlue1"))
+# dev.off ()
+```

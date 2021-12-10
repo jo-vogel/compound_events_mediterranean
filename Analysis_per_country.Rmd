@@ -1,0 +1,521 @@
+---
+title: "Analysis per country"
+author: "JVogel"
+date: "11 12 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r Main, include=FALSE, fig.height=1, fig.width=1}
+start <- Sys.time()
+library(tictoc)
+tic('Total')
+tic('Statistics')
+if(!require(ncdf4)) install.packages("ncdf4") # package for netcdf manipulation
+library(raster) # package for raster manipulation
+library(rgdal) # package for geospatial analysis
+library(ggplot2) # package for plotting
+library(berryFunctions)
+library(Kendall)  
+library(cpm) # Cramér-von-Mises test
+library(RVAideMemoire) # Cramér-von-Mises test
+library(rasterVis) # levelplots
+library(dplyr)
+library(modifiedmk) # Modified Mann-Kendall test accounting for autocorrelation
+library(maptools)
+library(pbapply)
+require(reshape2)
+
+load("D:/user/vogelj/compound_events_mediterran/Code/Workspaces/Main_variables_warm_season_compound_events.RData") # Events for warm season compound events
+# load("D:/user/vogelj/compound_events_mediterran/Code/Workspaces/Main_variables_whole_season_compound_events.RData") # Events for whole season compound events
+# load("D:/user/vogelj/compound_events_mediterran/Code/Workspaces/Main_variables_warm_season_heat_events.RData") # Events for warm season heat waves
+# load("D:/user/vogelj/compound_events_mediterran/Code/Workspaces/Main_variables_whole_season_heat_events.RData") # Events for whole season heat waves
+
+ocean <- readOGR('D:/user/vogelj/Data/ne_10m_ocean/ne_10m_ocean.shp') # Fuers Entfernen der Meeresfl?chen
+border <- readOGR('D:/user/vogelj/Data/ne_50m_admin_0_countries/ne_50m_admin_0_countries.shp')	
+
+
+#################
+# for warm season:
+vecyears <- seq(1,(40*184+184),184) # Vector for the summer period of 40 years
+
+# for whole season:
+# year_lengths <- rep(c(365,366,365,365),10)
+# vecyears <- c(1,cumsum(year_lengths)+1) # Vector for the whole period of 40 years
+##################
+```
+
+```{r Renaming, eval=T} 
+# message('renaming output from one workspace, so you can load another workspace with identical names without overwriting the first')
+# Warm season SPI
+event_ws <- event
+events_per_time_ws <- events_per_time
+event_series_ws <- event_series
+
+month_lengths_ws <- month_lengths
+vecyears_ws <- vecyears
+
+load("D:/user/vogelj/compound_events_mediterran/Code/Workspaces/Main_variables_whole_season_compound_events.RData") # Events for whole season compound events
+year_lengths <- rep(c(365,366,365,365),10)
+vecyears <- c(1,cumsum(year_lengths)+1) # Vector for the whole period of 40 years
+```
+
+```{r Results}
+# Plot change in compound events ####
+
+# Calculate changes over time
+# change <- ((event[,,,2]-event[,,,1])/event[,,,3])*100 # change in percent (2nd to 1st period)
+change <- ((event[,,,2]-event[,,,1])/event[,,,1])*100 # Percent (%) change in compound droughts and heatwaves during second period relative to first period
+fraction <- ((event[,,,2]-event[,,,1])/(event[,,,2]+event[,,,1]))*100 # Percentage change of compound events between 1999 - 2018 and 1979 - 1998, normalised by whole time period 
+# fraction_2ndperiod <- (event[,,,2]/event[,,,3])*100 # fraction of all events that occurred in the second time span
+# fraction ist das was Mazdiyasni gemacht hat. Es geht von -100 bis 100% und ist durch die Gesamtanzahl der Events normiert.
+# es ist aber ja nicht die prozentuale ?nderung relativ zur ersten H?lfte, sondern die proz. ?nderung relativ zum gesamten Zeitraum
+diff <- vector(mode="list",length=9)
+counter <- 1
+for (i in 1:3){
+  for (j in 1:3){
+    diff[[counter]] <- (event[,i,j,2]-event[,i,j,1]) # difference from 2nd to 1st period
+    counter <- counter + 1
+  }
+}
+change2 <- array(change,dim=c(length(coord[,1]),9))
+fraction2 <- array(fraction,dim=c(length(coord[,1]),9))
+event2 <- array(event,dim=c(length(coord[,1]),9,3)) # statt 2 Dim (3x3), nur 1 Dim (9), erst Zeilen, dann Spalten (siehe z.B. identical(event[,1,2,1],event2[,4,1]))
+
+# attach coordinates
+dat_1stperiod <- lapply(1:9, function (x) {cbind(coord,event2[,x,1])}) 
+dat_2ndperiod <- lapply(1:9, function (x) {cbind(coord,event2[,x,2])})
+dat_comp_period <- lapply(1:9, function (x) {cbind(coord,event2[,x,3])})
+datchange <- lapply(1:9, function (x) {cbind(coord,change2[,x])})
+datfraction <- lapply(1:9, function (x) {cbind(coord,fraction2[,x])})
+datdiff <- lapply(1:9, function (x) {cbind(coord,diff[[x]])})
+# convert to raster
+datras_1stperiod <- lapply(dat_1stperiod,rasterFromXYZ) # 1979 - 1998
+datras_2ndperiod <- lapply(dat_2ndperiod,rasterFromXYZ) # 1999 - 2018
+datras_comp_period <- lapply(dat_comp_period,rasterFromXYZ) # 1979 - 2018
+datras_change <- lapply(datchange,rasterFromXYZ)
+datras_fraction <- lapply(datfraction,rasterFromXYZ)
+datras_diff <- lapply(datdiff,rasterFromXYZ)
+
+# transform lists to bricks (easier to handle)
+brick_1stperiod <- brick(datras_1stperiod)
+brick_2ndperiod <- brick(datras_2ndperiod)
+brick_comp_period <- brick(datras_comp_period)
+brick_change <- brick(datras_change)
+brick_fraction <- brick(datras_fraction)
+brick_diff <- brick(datras_diff)
+
+dur_vec <- rep(c(3,5,7),3)
+per_vec <- c(rep(85,3),rep(90,3),rep(95,3))
+```
+
+```{r Results for warm season, eval=T}
+message('This is in case of loading 2 data sets')
+# Warm season ####
+##################
+fraction_ws <- ((event_ws[,,,2]-event_ws[,,,1])/(event_ws[,,,2]+event_ws[,,,1]))*100 # Percentage change of compound 
+fraction2_ws <- array(fraction_ws,dim=c(length(coord[,1]),9))
+event2_ws <- array(event_ws,dim=c(length(coord[,1]),9,2))
+dat_1stperiod_ws <- lapply(1:9, function (x) {cbind(coord,event2_ws[,x,1])}) 
+dat_2ndperiod_ws <- lapply(1:9, function (x) {cbind(coord,event2_ws[,x,2])})
+datfraction_ws <- lapply(1:9, function (x) {cbind(coord,fraction2_ws[,x])})
+datras_1stperiod_ws <- lapply(dat_1stperiod_ws,rasterFromXYZ) # 1979 - 1998
+datras_2ndperiod_ws <- lapply(dat_2ndperiod_ws,rasterFromXYZ) # 1999 - 2018
+datras_fraction_ws <- lapply(datfraction_ws,rasterFromXYZ)
+brick_1stperiod_ws <- brick(datras_1stperiod_ws)
+brick_2ndperiod_ws <- brick(datras_2ndperiod_ws)
+brick_fraction_ws <- brick(datras_fraction_ws)
+```
+
+``` {r Csa Csb areas, eval=T}
+# Remove areas which are not part of Köppen-Geiger Csa and Csb
+datras_1stperiod <- lapply(datras_1stperiod,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+datras_2ndperiod <- lapply(datras_2ndperiod,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+datras_comp_period <- lapply(datras_comp_period,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+datras_change <- lapply(datras_change,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+datras_fraction <- lapply(datras_fraction,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+datras_diff <- lapply(datras_diff,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+```
+
+```{r Csa Csb areas for warm season, eval=T}
+message('This is in case of loading 2 data sets')
+datras_1stperiod_ws <- lapply(datras_1stperiod_ws,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+datras_2ndperiod_ws <- lapply(datras_2ndperiod_ws,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+datras_fraction_ws <- lapply(datras_fraction_ws,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+```
+
+``` {r Crop extent, eval=T}
+med_extent <- c(-9.625,40.125,30.375,45.125)
+datras_1stperiod <- lapply(datras_1stperiod,function(x){crop(x,med_extent)})
+datras_2ndperiod <- lapply(datras_2ndperiod,function(x){crop(x,med_extent)})
+datras_comp_period <- lapply(datras_comp_period,function(x){crop(x,med_extent)})
+datras_change <- lapply(datras_change,function(x){crop(x,med_extent)})
+datras_fraction <- lapply(datras_fraction,function(x){crop(x,med_extent)})
+datras_diff <- lapply(datras_diff,function(x){crop(x,med_extent)})
+```
+
+```{r Crop extent for warm season, eval=T}
+message('This is in case of loading 2 data sets')
+datras_1stperiod_ws <- lapply(datras_1stperiod_ws,function(x){crop(x,med_extent)})
+datras_2ndperiod_ws <- lapply(datras_2ndperiod_ws,function(x){crop(x,med_extent)})
+datras_fraction_ws <- lapply(datras_fraction_ws,function(x){crop(x,med_extent)})
+```
+
+```{r Basic calculations, fig.height=10, fig.width=10}
+# aggregate Percent area in compound event of all pixels for each day using "events_per_time"
+# area_size <- length(na.omit(datras_1stperiod[[1]]@data@values))
+area_size <- length(which(Koeppen@data@values==1))
+
+events_per_time2 <- array(events_per_time,dim=c(dim(events_per_time)[1],9))# dim: pixels, heat wave cases
+events_per_pixel <- sapply(1:9,function(y){sapply(1:years, function (x) {sum(events_per_time2[(vecyears[x]:(vecyears[x+1]-1)),y])/area_size})}) # total yearly sum of compound events for all 9 cases, divided by total area
+
+events_per_time2_ws <- array(events_per_time_ws,dim=c(dim(events_per_time_ws)[1],9))# dim: pixels, heat wave cases
+events_per_pixel_ws <- sapply(1:9,function(y){sapply(1:years, function (x) {sum(events_per_time2_ws[(vecyears_ws[x]:(vecyears_ws[x+1]-1)),y])/area_size})}) # total yearly sum of compound events for all 9 cases, divided by total area
+
+events_per_pixel_90_5 <- cbind(events_per_pixel_ws[,5],events_per_pixel[,5])
+# events_per_pixel_90_5 <- cbind(events_per_pixel[,5])
+```
+
+``` {r Analysis by country, eval=T}
+
+# exemplary subset
+spain <- subset(x=border, subset=border@data[["SOVEREIGNT"]] == "Spain")
+# plot(datras_fraction[[5]]);plot(spain,add=T)
+# fraction_spain <- crop(datras_fraction[[5]],spain)
+# fraction_spain_mask <- mask(fraction_spain,spain)
+# plot(fraction_spain) # problematic for spain, probably due to the islands the extent is too big
+# plot(fraction_spain_mask);plot(spain,add=T)
+# mean(fraction_spain_mask)
+# cellStats(fraction_spain_mask,'mean')
+
+# find all Mediterreanean countries automatically 
+border_med <- crop(border,med_extent)
+# plot(border_med)
+# border_med@data$SOVEREIGNT # list of mediterranean countries
+Koeppen_med <- mask(Koeppen,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)
+
+
+# attribute each pixel to a country
+countries <- vector("list",length=length(border_med@data$SOVEREIGNT))
+Koeppen_mask <- vector("list",length=length(border_med@data$SOVEREIGNT))
+for (i in 1:length(border_med@data$SOVEREIGNT)){
+  countries[[i]] <- subset(x=border, subset=border@data[["SOVEREIGNT"]] == border_med@data$SOVEREIGNT[i])
+  Koeppen_mask[[i]] <- crop(Koeppen_med,countries[[i]]) # cropping not necessary, but visually helpful
+  Koeppen_mask[[i]] <- mask(Koeppen_mask[[i]],countries[[i]])
+}
+
+
+# exclude countries without data
+countries_excl <- sapply(1:length(border_med@data$SOVEREIGNT),function(x) all(is.na(Koeppen_mask[[x]]@data@values)))
+# barplot(countries_excl,names.arg=border_med@data$SOVEREIGNT,horiz=T, width=rep(6,36), ylim=c(0,230) ,las=2, col="lightblue",space=0.1,cex.names=0.7)
+med_countries <- border_med@data$SOVEREIGNT[!countries_excl] # list of Mediterranean countries with data
+med_countries <- med_countries[-13] # remove Israel once (it's included twice)
+Cyprus <- aggregate(rbind(countries[[29]],countries[[30]])) # merge northern and southern cyprus
+med_countries <- med_countries[-16] # exclude nothern Cyprus
+med_countries <- med_countries[-11] # exclude Jordan
+med_countries <- med_countries[-17] # exclude Bulgaria
+med_countries <- med_countries[-c(7,8,16,17,19)] # exclude Bosnia and Herzegovina, Macedonia, Montenegro, Croatia, Albania
+west_balkan <- aggregate(rbind(countries[[13]],countries[[16]],countries[[31]],countries[[33]],countries[[36]])) # merge Bosnia and Herzegovina, Macedonia, Montenegro, Croatia, Albania
+countries_red <- sapply(1:length(med_countries),function(x) subset(x=border, subset=border@data[["SOVEREIGNT"]] == med_countries[x]))
+countries_red[[13]] <- Cyprus # replace southern Cyprus with joint Cyprus
+countries_red[[15]] <- west_balkan # include Western Balkan
+levels(med_countries) <- c(levels(med_countries),"Western Balkan","Israel and Palestinian territories")
+med_countries[15] <- "Western Balkan"
+med_countries[10] <- "Israel and Palestinian territories" # name it "Israel and Palestinian territories"
+names(countries_red) <- med_countries
+
+Koeppen_mask_red <- Koeppen_mask[!countries_excl]
+Koeppen_mask_red <- Koeppen_mask_red[-13]
+Cyprus_ras <- merge(Koeppen_mask[[29]],Koeppen_mask[[30]]) # merge northern and southern cyprus
+Koeppen_mask_red <- Koeppen_mask_red[-16]
+Koeppen_mask_red <- Koeppen_mask_red[-11]
+Koeppen_mask_red <- Koeppen_mask_red[-17]
+Koeppen_mask_red <- Koeppen_mask_red[-c(7,8,16,17,19)]
+west_balkan_ras <- merge(Koeppen_mask[[13]],Koeppen_mask[[16]],Koeppen_mask[[31]],Koeppen_mask[[33]],Koeppen_mask[[36]])
+Koeppen_mask_red[[13]] <- Cyprus_ras
+Koeppen_mask_red[[15]] <- west_balkan_ras
+names(Koeppen_mask_red) <- med_countries
+
+# Suggestion: merge Israel and Jordan, merge (or exclude) Western Balkan (Montenegro, Macedonia, Jordan, Bulgaria, Bosnia and Herzegovina), omit Jordan (only 3 pixels and similar to Israel); omit Bulgaria (or put it to Greece or Western Balkan)
+
+
+#' What do I want to calculate country-wise? ####
+#################################################
+
+
+
+#' increase per country ####
+############################
+# needs to be calculated from event_series, not from events_per_time as done so far
+
+# 1) aggregate event_series yearly
+# events_yearly_agg <- sapply(1:years, function (x) {sum(event_series[,(vecyears[x]:(vecyears[x+1]-1)),2,2])}) # aggregated average yearly number of events 
+events_yearly <- pbsapply(1:25929,function(y){sapply(1:years, function (x) {sum(event_series[y,(vecyears[x]:(vecyears[x+1]-1)),2,2])})}) # average yearly number of events
+events_yearly_ws <- pbsapply(1:25929,function(y){sapply(1:years, function (x) {sum(event_series_ws[y,(vecyears_ws[x]:(vecyears_ws[x+1]-1)),2,2])})}) # average yearly number of events
+
+# 2) make country-wise subsets
+
+# retrieve pixels belonging to each country
+# spanish_pixels <- crop(Koeppen_med,spain) 
+# spanish_pixels <- mask(spanish_pixels,spain)
+# r.pts <- rasterToPoints(spanish_pixels, spatial=TRUE)
+# r.pts@data <- data.frame(r.pts@data, long=coordinates(r.pts)[,1], lat=coordinates(r.pts)[,2])  
+
+country_points <- sapply(1:length(Koeppen_mask_red), function(x) {rasterToPoints(Koeppen_mask_red[[x]], spatial=T)})
+country_point_coord <- lapply(1:length(Koeppen_mask_red), function(x) {data.frame(country_points[[x]]@data, long=coordinates(country_points[[x]])[,1], lat=coordinates(country_points[[x]])[,2])})
+
+
+# get coordinates indices
+coord_com <- paste(coord[,1],coord[,2])
+# coord_com_spain <- paste(r.pts@coords[,1],r.pts@coords[,2])
+# mycoord <- which(coord_com %in% coord_com_spain)
+
+coord_com_country <-  sapply(1:length(Koeppen_mask_red), function(x) paste(country_points[[x]]@coords[,1],country_points[[x]]@coords[,2]))
+coord_ind <- sapply(1:length(Koeppen_mask_red), function(x)  which(coord_com %in% coord_com_country[[x]]))
+
+
+# retrieve pixels with the coordinates of the respective country from the dataframe
+# events_yearly_spain <- events_yearly[,mycoord]
+events_yearly_country <- sapply(1:length(Koeppen_mask_red), function(x) events_yearly[,coord_ind[[x]]])
+events_yearly_country_ws <- sapply(1:length(Koeppen_mask_red), function(x) events_yearly_ws[,coord_ind[[x]]])
+names(events_yearly_country) <- med_countries; names(events_yearly_country_ws) <- med_countries
+
+
+
+# 3) calculate increase
+# mean_numb_event_spain <- apply(events_yearly_spain,1,mean)
+# lm_spain <- lm(mean_numb_event_spain~c(1:40))
+
+mean_numb_event_country <- sapply(1:length(Koeppen_mask_red), function(x) apply(events_yearly_country[[x]],1,mean))
+mean_numb_event_country_ws <- sapply(1:length(Koeppen_mask_red), function(x) apply(events_yearly_country_ws[[x]],1,mean))
+colnames(mean_numb_event_country) <- med_countries; colnames(mean_numb_event_country_ws) <- med_countries
+plot(mean_numb_event_country[,2]) # plot exemplary country
+lm_country <- lapply(1:length(Koeppen_mask_red), function(x) lm(mean_numb_event_country[,x]~c(1:40)))
+slopes_country <- sapply(1:length(Koeppen_mask_red), function(x) lm_country[[x]]$coefficients[2])
+slopes_country_df <- data.frame('Slopes'=slopes_country,'Country'=med_countries)
+slopes_country_df <- slopes_country_df[order(slopes_country_df$Slopes),]
+lm_country_ws <- lapply(1:length(Koeppen_mask_red), function(x) lm(mean_numb_event_country_ws[,x]~c(1:40)))
+slopes_country_ws <- sapply(1:length(Koeppen_mask_red), function(x) lm_country_ws[[x]]$coefficients[2])
+slopes_country_df_ws <- data.frame('Slopes'=slopes_country_ws,'Country'=med_countries)
+slopes_country_df_ws <- slopes_country_df_ws[order(slopes_country_df_ws$Slopes),]
+plotnames <- as.character(slopes_country_df[,2])
+plotnames[which(plotnames == "Israel and Palestinian territories")] <- "Israel and Palest. ter."
+plotnames_ws <- as.character(slopes_country_df_ws[,2])
+plotnames_ws[which(plotnames_ws == "Israel and Palestinian territories")] <- "Israel and Palest. ter."
+
+message("see section on Stat. significance below to infer the associated tests to the stars in the plot")
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/Mean_slope_country_warm_whole_season_v2.png", height=12, width=10, unit="cm", pointsize = 6, bg = "white",
+# png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/Mean_slope_country_ws.png", height=8, width=10, unit="cm", pointsize = 6, bg = "white", 
+res = 2000, restoreConsole = TRUE, type = "windows")
+# par(mar=c(4,8,0,2),mfrow=c(2,1),oma=c(0,0,0,0))
+  par(mar=c(4,8,0,2),mfrow=c(2,1),oma=c(0,0,0,0))
+  barplot(slopes_country_df_ws[,1]*40, names.arg=plotnames_ws, horiz=T, width=rep(6,36), ylim=c(0,230), las=1, col="SaddleBrown", space=0.1, cex.names=0.65, xlab="Change in number of compound events from 1979 - 2018")
+  mtext("Warm season compound events",side=3,line=-8,font=2)
+  # mtext("*",side=2,line=-2,cex=1.1,at=seq(1,95,6.65)[c(3,6,8,9,10,11,13,14)],las=1,font=2) # submitted version
+  mtext("*",side=2,line=-2,cex=1.1,at=seq(1,95,6.65)[c(8,10,11,13,14)],las=1,font=2) # revised version
+  barplot(slopes_country_df[,1]*40, names.arg=plotnames, horiz=T, width=rep(6,36), ylim=c(0,230), las=1, col="ForestGreen", space=0.1, cex.names=0.65, xlab="Change in number of compound events from 1979 - 2018")
+  mtext("Deseasonalised compound events",side=3,line=-8,font=2)
+  # mtext("*",side=2,line=-0.1,cex=1.1,at=seq(1,95,6.65)[c(2,3,7,8,11,13,15)],las=1,font=2) # submitted version
+  mtext("*",side=2,line=-0.1,cex=1.1,at=seq(1,95,6.65)[c(2,8,11,15)],las=1,font=2) # revised version
+
+# barplot(slopes_country_df[,1], names.arg=slopes_country_df[,2], horiz=T, width=rep(6,36), ylim=c(0,230), las=2, col="lightblue", space=0.1, cex.names=0.7, xlab="Increase in number of events per year per pixel")
+dev.off()
+
+# message("You cannot assign percentage change meaningfully because the linear model is unsuitable as it gives negative values in 2 cases (i.e. you start at an event number below 0).")
+# country_perc_increase <- sapply(1:length(Koeppen_mask_red), function(x) (lm_country[[x]]$coefficients[1]+lm_country[[x]]$coefficients[[2]]*40)/(lm_country[[x]]$coefficients[1]+lm_country[[x]]$coefficients[[2]]*1)/40)
+# slopes_perc_country_df <- data.frame('Slopes'=country_perc_increase,'Country'=med_countries)
+# slopes_perc_country_df <- slopes_perc_country_df[order(slopes_perc_country_df$Slopes),]
+# barplot(slopes_perc_country_df[,1]*100, names.arg=slopes_country_df[,2], horiz=T, width=rep(6,36), ylim=c(0,230), las=1, col="lightblue", space=0.1, cex.names=0.7, xlab="Yearly percentage change in number of compound events")
+# country_perc_increase_ws <- sapply(1:length(Koeppen_mask_red), function(x) (lm_country_ws[[x]]$coefficients[1]+lm_country_ws[[x]]$coefficients[[2]]*40)/(lm_country_ws[[x]]$coefficients[1]+lm_country_ws[[x]]$coefficients[[2]]*1)/40)
+# slopes_perc_country_df_ws <- data.frame('Slopes'=country_perc_increase_ws,'Country'=med_countries)
+# slopes_perc_country_df_ws <- slopes_perc_country_df_ws[order(slopes_perc_country_df_ws$Slopes),]
+# barplot(slopes_perc_country_df_ws[,1]*100, names.arg=slopes_country_df_ws[,2], horiz=T, width=rep(6,36), ylim=c(0,230), las=1, col="lightblue", space=0.1, cex.names=0.7, xlab="Yearly percentage change in number of compound events")
+
+
+# Plot yearly number of events ####
+
+# plot.ts(mean_numb_event_country[,1:10])
+
+df_country <- data.frame(Time = 1979:2018,mean_numb_event_country[,c(14:1,15)]) # arrange alphabetically
+df_country_ws <- data.frame(Time = 1979:2018,mean_numb_event_country_ws[,c(14:1,15)]) # arrange alphabetically
+names(df_country)[16] <- "Western\nBalkan" # remove dot between words
+names(df_country_ws)[16] <- "Western\nBalkan"
+names(df_country)[6] <- "Israel and\nPalest. ter."
+names(df_country)[6] <- "Israel and\nPalest. ter."
+df_country <- melt(df_country ,  id.vars = 'Time', variable.name = 'Countries')
+df_country_ws <- melt(df_country_ws ,  id.vars = 'Time', variable.name = 'Countries')
+
+# All graphs in one plot
+# ggplot(df_country, aes(Time,value)) + geom_line(aes(colour = Countries))
+
+# All graphs separated into panels for deseasonalised events
+ggplot(df_country,aes(Time,value)) + geom_line(aes(colour = Countries)) +
+  geom_smooth(method = "lm", se = F,aes(colour= Countries))+
+  facet_grid(Countries ~ .,)+
+   ylab("Average yearly number of compound events")+ 
+  theme(axis.title.x = element_text(size=12, face="bold"),
+axis.title.y = element_text(size=12, face="bold"))
+ggsave(filename="number_of_events_per_country_ds.png",path="D:/user/vogelj/compound_events_mediterran/Output/Plots/", units="cm",height=25)
+
+# All graphs separated into panels for warm season events
+ggplot(df_country_ws, aes(time,value)) + geom_line(aes(colour = Countries))
+ggplot(df_country_ws, aes(time,value)) +
+  geom_line(aes(colour = Countries)) +
+  geom_smooth(method = "lm", se = F,aes(colour= Countries))+
+  facet_grid(Countries ~ .)
+ggsave(filename="number_of_events_per_country_ws.png",path="D:/user/vogelj/compound_events_mediterran/Output/Plots/", units="cm",height=25)
+
+# All graphs separated into panels for warm season and deseasonalised events
+df_country_all <- cbind(df_country,df_country_ws[,3])
+colnames(df_country_all)[4] <- "value_ws"
+
+colors <- c("Deseasonalised" = "ForestGreen", "Warm season" = "SaddleBrown")
+ggplot(df_country_all) + geom_line(aes(Time,value,colour = "Deseasonalised"), size=1.0) +
+  geom_smooth(method = "lm", se = F,aes(Time,value,colour ="Deseasonalised"), size=0.6)+
+  geom_line(aes(Time,value_ws,colour = "Warm season"), size=1.0) +
+  geom_smooth(method = "lm", se = F,aes(Time,value_ws,colour ="Warm season"), size=0.6)+
+  scale_color_manual(values = colors)+
+  facet_grid(Countries ~ .,)+
+  ylab("Average yearly number of compound events")+ 
+  labs(colour="Compound events") +
+  theme(axis.title.x = element_text(size=12, face="bold"),
+        axis.title.y = element_text(size=12, face="bold"))
+ggsave(filename="number_of_events_per_country_ds_ws.png",path="D:/user/vogelj/compound_events_mediterran/Output/Plots/", units="cm",height=27)
+
+  
+
+
+
+# average for both periods and whole period ####
+
+period1_countries <- vector("list",length=length(countries_red))
+period1_countries_mask <- vector("list",length=length(countries_red))
+period2_countries <- vector("list",length=length(countries_red))
+period2_countries_mask <- vector("list",length=length(countries_red))
+periodcomp_countries <- vector("list",length=length(countries_red))
+periodcomp_countries_mask <- vector("list",length=length(countries_red))
+for (i in 1:length(countries_red)){
+  period1_countries[[i]] <- crop(datras_1stperiod[[5]],countries_red[[i]])
+  period1_countries_mask[[i]] <- mask(period1_countries[[i]],countries_red[[i]])
+  period2_countries[[i]] <- crop(datras_2ndperiod[[5]],countries_red[[i]])
+  period2_countries_mask[[i]] <- mask(period2_countries[[i]],countries_red[[i]])
+  periodcomp_countries[[i]] <- crop(datras_comp_period[[5]],countries_red[[i]])
+  periodcomp_countries_mask[[i]] <- mask(periodcomp_countries[[i]],countries_red[[i]])
+}
+# Plot all countries
+sapply(1:length(countries_red),function(x) {plot(period1_countries_mask[[x]],main=med_countries[x]);plot(countries_red[[x]],add=T)})
+sapply(1:length(countries_red),function(x) {plot(period2_countries_mask[[x]],main=med_countries[x]);plot(countries_red[[x]],add=T)})
+
+mean_1stperiod <- sapply(1:length(med_countries),function(x) cellStats(period1_countries_mask[[x]],'mean'))
+mean_2ndperiod <- sapply(1:length(med_countries),function(x) cellStats(period2_countries_mask[[x]],'mean'))
+mean_compperiod <- sapply(1:length(med_countries),function(x) cellStats(periodcomp_countries_mask[[x]],'mean'))
+period1_countries_df <- data.frame('Data'=mean_1stperiod,'Country'=med_countries)
+period1_countries_df <- period1_countries_df[order(period1_countries_df$Data),]
+period2_countries_df <- data.frame('Data'=mean_2ndperiod,'Country'=med_countries)
+period2_countries_df <- period2_countries_df[order(period2_countries_df$Data),]
+periodcomp_countries_df <- data.frame('Data'=mean_compperiod,'Country'=med_countries)
+periodcomp_countries_df <- periodcomp_countries_df[order(periodcomp_countries_df$Data),]
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/Mean_1st_2nd_period_country.png", height=14, width=10, unit="cm", pointsize = 6, 
+# png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/Mean_1st_2nd_period_country_ws.png", height=14, width=10, unit="cm", pointsize = 6, 
+bg ="white", res = 2000, restoreConsole = TRUE, type = "windows")
+par(mar=c(4,8,0,1),mfrow=c(2,1),oma=c(0,0,0,0))
+barplot(period1_countries_df[,1], names.arg=period1_countries_df[,2], horiz=T, width=rep(6,36), ylim=c(0,230), las=2, col="lightblue", space=0.1, cex.names=0.7, xlab="Number of events per pixel from 1979 - 1998")
+mtext('1979 - 1998',side=3,line=-5)
+barplot(period2_countries_df[,1], names.arg=period2_countries_df[,2], horiz=T, width=rep(6,36), ylim=c(0,230), las=2, col="lightblue", space=0.1, cex.names=0.7, xlab="Number of events per pixel from 1999 - 2018")
+mtext('1999 - 2018',side=3,,line=-5)
+dev.off()
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/Mean_complete_period_country.png", height=14, width=10, unit="cm",  
+# png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/Mean_complete_period_country_ws.png", height=14, width=10, unit="cm",
+pointsize = 6, bg= "white", res = 2000, restoreConsole = TRUE, type = "windows")
+par(mar=c(4,8,0,1),oma=c(0,0,0,0))
+barplot(periodcomp_countries_df[,1], names.arg=periodcomp_countries_df[,2], horiz=T, width=rep(6,36), ylim=c(0,230), las=2, col="lightblue", space=0.1, cex.names=0.7, xlab="Number of events per pixel from 1979 - 2018")
+mtext('1979 - 2018',side=3,line=-5)
+dev.off()
+
+
+# fraction of events ####
+# make country-wise subsets of the raster file
+fractions <- vector("list",length=length(countries_red))
+fractions_mask <- vector("list",length=length(countries_red))
+for (i in 1:length(countries_red)){
+  fractions[[i]] <- crop(datras_fraction[[5]],countries_red[[i]])
+  fractions_mask[[i]] <- mask(fractions[[i]],countries_red[[i]])
+}
+# Plot all countries
+sapply(1:length(countries_red),function(x) {plot(fractions_mask[[x]],main=med_countries[x]);plot(countries_red[[x]],add=T)})
+# Pixel, die nur z.T. im Landesgebiet liegen: macht wenig aus, ich denke es kann daher ignoriert werden
+
+# Calculate mean for each country-wise subset
+mean_fraction <- sapply(1:length(med_countries),function(x) cellStats(fractions_mask[[x]],'mean'))
+fraction_country_df <- data.frame('Data'=mean_fraction,'Country'=med_countries)
+fraction_country_df <- fraction_country_df[order(fraction_country_df$Data),]
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/Mean_fraction_country.png", height=8, width=10, unit="cm", pointsize = 6,
+# png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/Mean_fraction_country_ws.png", height=8, width=10, unit="cm", pointsize = 6,
+bg= "white", res = 2000, restoreConsole = TRUE, type = "windows")
+par(mar=c(5,8,4,2))
+barplot(fraction_country_df[,1], names.arg=fraction_country_df[,2], horiz=T, width=rep(6,36), ylim=c(0,230), las=2, col="lightblue", space=0.1, cex.names=0.7, xlab="Distribution of events between 1979 - 1998 and 1999 - 2018 given by the difference between
+both periods divided by the entire time span 1979 - 2018")
+dev.off()
+
+
+# Stat. significance ####
+mk_countries <- apply(mean_numb_event_country,2,MannKendall)
+mk_countries_adj <- apply(mean_numb_event_country,2,mmkh)
+pval_mk_countries <- sapply(1:length(mk_countries), function(x) mk_countries[[x]]$sl)
+pval_mk_countries_adj <- sapply(1:dim(mk_countries_adj)[2], function(x) mk_countries_adj[2,x]) # second value is the p-value
+names(pval_mk_countries_adj) <- names(Koeppen_mask_red)
+mk_countries_ws <- apply(mean_numb_event_country_ws,2,MannKendall)
+mk_countries_ws_adj <- apply(mean_numb_event_country_ws,2,mmkh)
+pval_mk_countries_ws <- sapply(1:length(mk_countries_ws), function(x) mk_countries_ws[[x]]$sl)
+pval_mk_countries_ws_adj <- sapply(1:dim(mk_countries_ws_adj)[2], function(x) mk_countries_ws_adj[2,x])
+names(pval_mk_countries_ws_adj) <- names(Koeppen_mask_red)
+
+# Adjust for multiple testing problem using fdr/BH and Bonferroni approach (both with and without the Hamed correction)
+pval_mk_countries_ws_bh <- p.adjust(pval_mk_countries_ws, "fdr")
+pval_mk_countries_bh <- p.adjust(pval_mk_countries, "fdr")
+pval_mk_countries_ws_bon <- p.adjust(pval_mk_countries_ws, "bonferroni")
+pval_mk_countries_bon <- p.adjust(pval_mk_countries, "bonferroni")
+pval_mk_countries_ws_adj_bh <- p.adjust(pval_mk_countries_ws_adj, "fdr")
+pval_mk_countries_adj_bh <- p.adjust(pval_mk_countries_adj, "fdr")
+pval_mk_countries_ws_adj_bon <- p.adjust(pval_mk_countries_ws_adj, "bonferroni")
+pval_mk_countries_adj_bon <- p.adjust(pval_mk_countries_adj, "bonferroni")
+
+png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/MannKendall_country.png", height=8, width=10, unit="cm", pointsize = 6, 
+# png(file="D:/user/vogelj/compound_events_mediterran/Output/Plots/MannKendall_country_ws.png", height=8, width=10, unit="cm", pointsize = 6, 
+bg = "white",res = 2000, restoreConsole = TRUE, type = "windows")
+par(mar=c(5,8,4,2))
+barplot(pval_mk_countries, names.arg=med_countries, horiz=T, width=rep(6,36), ylim=c(0,230), las=2, col="lightblue", space=0.1, cex.names=0.7, xlab="p-Value of Mann-Kendall test")
+abline(v=0.05,col='red')
+dev.off()
+
+med_countries[pval_mk_countries<=0.05]
+med_countries[pval_mk_countries>0.05]
+med_countries[pval_mk_countries_ws<=0.05]
+
+# Adjustments
+med_countries[pval_mk_countries_adj<=0.05]
+med_countries[pval_mk_countries_adj_bh<=0.05] # preferred approach
+med_countries[pval_mk_countries_bh<=0.05]
+med_countries[pval_mk_countries_adj_bon<=0.05]
+med_countries[pval_mk_countries_bon<=0.05]
+
+med_countries[pval_mk_countries_ws_adj<=0.05]
+med_countries[pval_mk_countries_ws_adj_bh<=0.05] # preferred approach
+med_countries[pval_mk_countries_ws_bh<=0.05]
+med_countries[pval_mk_countries_ws_adj_bon<=0.05]
+med_countries[pval_mk_countries_ws_bon<=0.05]
+
+# I think many are not significant because the countries are small
+# Italy, France and Albania are not significant, despite of high slopes, whereas Israel is significant besides a low slope
+# if you look at their time series, you see that there are a few outlier years, which give a high slope, but don't affect the significance level so much
+
+# ggf. monthly pattern
+# ggf. info on heat waves and droughts alone
+
+# average angle
+# see Results_mixed.Rmd
+```

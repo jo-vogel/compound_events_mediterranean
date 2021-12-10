@@ -1,0 +1,480 @@
+---
+title: "Results_Mediterranean"
+output: html_document
+---
+
+```{r setup results, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r Main, include=FALSE, fig.height=1, fig.width=1}
+start <- Sys.time()
+library(tictoc)
+tic('Total')
+tic('Statistics')
+if(!require(ncdf4)) install.packages("ncdf4") # package for netcdf manipulation
+library(raster) # package for raster manipulation
+library(rgdal) # package for geospatial analysis
+library(ggplot2) # package for plotting
+library(berryFunctions)
+library(Kendall)  
+library(cpm) # Cramér-von-Mises test
+library(RVAideMemoire) # Cramér-von-Mises test
+library(rasterVis) # levelplots
+library(dplyr)
+library(modifiedmk) # Modified Mann-Kendall test accounting for autocorrelation
+library(pbapply)
+library(ggcorrplot)
+library(corrplot)
+
+# source('Mediterranean_compound_events.R')
+# source('Mediterranean_compound_events_whole_year.R')
+
+# load("D:/user/vogelj/compound_events_mediterran/Code/Workspaces/Main_variables_warm_season_compound_events.RData") # Events for warm season compound events
+# load("D:/user/vogelj/compound_events_mediterran/Code/Workspaces/Main_variables_whole_season_compound_events.RData") # Events for whole season compound events
+# load("D:/user/vogelj/compound_events_mediterran/Code/Workspaces/Main_variables_warm_season_heat_events.RData") # Events for warm season heat waves
+# load("D:/user/vogelj/compound_events_mediterran/Code/Workspaces/Main_variables_whole_season_heat_events.RData") # Events for whole season heat waves
+
+# Revision ####
+# load("D:/user/vogelj/compound_events_mediterran/Code/Workspaces/Main_variables_warm_season_compound_events_multiple_droughts.RData") # Events for warm season compound events
+load("D:/user/vogelj/compound_events_mediterran/Code/Workspaces/Main_variables_whole_season_compound_events_multiple_droughts.RData") # Events for whole season compound events
+
+
+ocean <- readOGR('D:/user/vogelj/Data/ne_10m_ocean/ne_10m_ocean.shp') # Fuers Entfernen der Meeresfl?chen
+border <- readOGR('D:/user/vogelj/Data/ne_50m_admin_0_countries/ne_50m_admin_0_countries.shp')	
+
+
+#################
+# for warm season:
+# vecyears <- seq(1,(40*184+184),184) # Vector for the summer period of 40 years
+
+# for whole season:
+year_lengths <- rep(c(365,366,365,365),10)
+vecyears <- c(1,cumsum(year_lengths)+1) # Vector for the whole period of 40 years
+##################
+```
+
+```{r SPEI, eval=F} 
+# message('easy, preliminary way to change from SPI to SPEI (without having to adjust the whole code)')
+# SPI events
+event_a <- event
+events_per_time_a <- events_per_time
+event_series_a <- event_series
+
+# SPEI events
+event <- event_b
+events_per_time <- events_per_time_b
+event_series <- event_series_b
+```
+
+```{r Results}
+# Plot change in compound events ####
+
+# Calculate changes over time
+# change <- ((event[,,,2]-event[,,,1])/event[,,,3])*100 # change in percent (2nd to 1st period)
+change <- ((event[,,,2]-event[,,,1])/event[,,,1])*100 # Percent (%) change in compound droughts and heatwaves during second period relative to first period
+fraction <- ((event[,,,2]-event[,,,1])/(event[,,,2]+event[,,,1]))*100 # Percentage change of compound events between 1999-2018 and 1979-1998, normalised by whole time period 
+# fraction_2ndperiod <- (event[,,,2]/event[,,,3])*100 # fraction of all events that occurred in the second time span
+# fraction ist das was Mazdiyasni gemacht hat. Es geht von -100 bis 100% und ist durch die Gesamtanzahl der Events normiert.
+# es ist aber ja nicht die prozentuale ?nderung relativ zur ersten H?lfte, sondern die proz. ?nderung relativ zum gesamten Zeitraum
+diff <- vector(mode="list",length=9)
+counter <- 1
+for (i in 1:3){
+  for (j in 1:3){
+    diff[[counter]] <- (event[,i,j,2]-event[,i,j,1]) # difference from 2nd to 1st period
+    counter <- counter + 1
+  }
+}
+change2 <- array(change,dim=c(length(coord[,1]),9))
+fraction2 <- array(fraction,dim=c(length(coord[,1]),9))
+event2 <- array(event,dim=c(length(coord[,1]),9,2)) # statt 2 Dim (3x3), nur 1 Dim (9), erst Zeilen, dann Spalten (siehe z.B. identical(event[,1,2,1],event2[,4,1])); event hat noch in der letzten Dimension noch eine weitere, dritte Spalte (1.Spalte: 1. Zeitraum, 2. Spalte: 2. Zeitraum, 3.Spalte: Gesamtzeitraum), diese wird hier bei der Umwandlung weggelassen
+
+# attach coordinates
+dat_1stperiod <- lapply(1:9, function (x) {cbind(coord,event2[,x,1])}) 
+dat_2ndperiod <- lapply(1:9, function (x) {cbind(coord,event2[,x,2])})
+datchange <- lapply(1:9, function (x) {cbind(coord,change2[,x])})
+datfraction <- lapply(1:9, function (x) {cbind(coord,fraction2[,x])})
+datdiff <- lapply(1:9, function (x) {cbind(coord,diff[[x]])})
+# convert to raster
+datras_1stperiod <- lapply(dat_1stperiod,rasterFromXYZ) # 1979-1998
+datras_2ndperiod <- lapply(dat_2ndperiod,rasterFromXYZ) # 1999-2018
+datras_change <- lapply(datchange,rasterFromXYZ)
+datras_fraction <- lapply(datfraction,rasterFromXYZ)
+datras_diff <- lapply(datdiff,rasterFromXYZ)
+
+# transform lists to bricks (easier to handle)
+brick_1stperiod <- brick(datras_1stperiod)
+brick_2ndperiod <- brick(datras_2ndperiod)
+brick_change <- brick(datras_change)
+brick_fraction <- brick(datras_fraction)
+brick_diff <- brick(datras_diff)
+
+dur_vec <- rep(c(3,5,7),3)
+per_vec <- c(rep(85,3),rep(90,3),rep(95,3))
+```
+
+``` {r Remove ocean areas, eval=F}
+# still useful if you want to avoid that pixel overlap into the sea
+# also the results are different in this case (time series example from poster), it seems that the few additional coastal areas make quite a difference
+# no longer necessary if you reduce to Köppen-Geiger Csa and Csb areas anyways
+# Remove marine areas
+datras_1stperiod <- lapply(datras_1stperiod,function(x){mask(x,ocean,inverse=T)})
+datras_2ndperiod <- lapply(datras_2ndperiod,function(x){mask(x,ocean,inverse=T)})
+datras_change <- lapply(datras_change,function(x){mask(x,ocean,inverse=T)})
+datras_fraction <- lapply(datras_fraction,function(x){mask(x,ocean,inverse=T)})
+datras_diff <- lapply(datras_diff,function(x){mask(x,ocean,inverse=T)})
+```
+
+``` {r Csa Csb areas, eval=T}
+# Remove areas which are not part of Köppen-Geiger Csa and Csb
+datras_1stperiod <- lapply(datras_1stperiod,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+datras_2ndperiod <- lapply(datras_2ndperiod,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+datras_change <- lapply(datras_change,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+datras_fraction <- lapply(datras_fraction,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+datras_diff <- lapply(datras_diff,function(x){mask(x,Koeppen,maskvalue=c(1),updatevalue=NA,inverse=T)})
+
+# warning('old workspaces use still 14 instead of 1 as mask value here')
+
+# datras_1stperiod <- lapply(datras_1stperiod,function(x){mask(x,Koeppen,maskvalue=c(14),updatevalue=NA,inverse=T)})
+# datras_2ndperiod <- lapply(datras_2ndperiod,function(x){mask(x,Koeppen,maskvalue=c(14),updatevalue=NA,inverse=T)})
+# datras_change <- lapply(datras_change,function(x){mask(x,Koeppen,maskvalue=c(14),updatevalue=NA,inverse=T)})
+# datras_fraction <- lapply(datras_fraction,function(x){mask(x,Koeppen,maskvalue=c(14),updatevalue=NA,inverse=T)})
+# datras_diff <- lapply(datras_diff,function(x){mask(x,Koeppen,maskvalue=c(14),updatevalue=NA,inverse=T)})
+```
+
+``` {r Crop extent, eval=T}
+med_extent <- c(-9.625,40.125,30.375,45.125)
+datras_1stperiod <- lapply(datras_1stperiod,function(x){crop(x,med_extent)})
+datras_2ndperiod <- lapply(datras_2ndperiod,function(x){crop(x,med_extent)})
+datras_change <- lapply(datras_change,function(x){crop(x,med_extent)})
+datras_fraction <- lapply(datras_fraction,function(x){crop(x,med_extent)})
+datras_diff <- lapply(datras_diff,function(x){crop(x,med_extent)})
+```
+
+## Number of compound events 1979-1998
+```{r Map1, fig.height=10, fig.width=10}
+par(mfrow=c(3,3))
+a <- sapply(1:9, function (x) {plot(datras_1stperiod[[x]],main=paste0(dur_vec[x],'-Day ',per_vec[x],'th Percentile'),zlim=c(min(brick_1stperiod@data@min),max(brick_1stperiod@data@max)));plot(border,col='transparent', border='black',add=TRUE)})
+```
+
+## Number of compound events 1999-2018
+```{r Map2, fig.height=10, fig.width=10}
+par(mfrow=c(3,3),oma=c(1,1,1,2))
+a <- sapply(1:9, function (x) {plot(datras_2ndperiod[[x]],main=paste0(dur_vec[x],'-Day ',per_vec[x],'th Percentile'),zlim=c(min(brick_2ndperiod@data@min),max(brick_2ndperiod@data@max)));plot(border,col='transparent', border='black',add=TRUE)})
+# cols <-  (topo.colors(255))
+# sapply(1:9, function (x) {plot(datras_change[[x]],main=paste0(dur_vec[x],'-Day ',per_vec[x],'th Percentile'),col=cols)})
+```
+
+## Percentage change of compound events between 1999-2018 and 1979-1998
+```{r Map3, fig.height=10, fig.width=10}
+par(mfrow=c(3,3),oma=c(1,1,1,2))
+a <- sapply(1:9, function (x) {plot(datras_change[[x]],main=paste0(dur_vec[x],'-Day ',per_vec[x],'th Percentile'),zlim=c(min(brick_change@data@min),max(brick_change@data@values[is.finite(brick_change@data@values)])));plot(border,col='transparent', border='black',add=TRUE)})
+# note that there are infinite values (therefore the complex command to get maximum in line above is needed)
+# note also: the  highest non-infinite value from brick_change@data@max might not be correct because there can be higher values in a layer, which has Inf as maximum
+```
+
+## Difference of number of compound events between 1999-2018 and 1979-1998
+```{r Map4, fig.height=10, fig.width=10}
+par(mfrow=c(3,3),oma=c(1,1,1,2))
+a <- sapply(1:9, function (x) {plot(datras_diff[[x]],main=paste0(dur_vec[x],'-Day ',per_vec[x],'th Percentile'),zlim=c(min(brick_diff@data@min),max(brick_diff@data@max)));plot(border,col='transparent', border='black',add=TRUE)})
+```
+
+## Percentage change of compound events between 1999-2018 and 1979-1998, normalised by whole time period 
+```{r Map5, fig.height=10, fig.width=10}
+par(mfrow=c(3,3),oma=c(1,1,1,2))
+a <- sapply(1:9, function (x) {plot(datras_fraction[[x]],main=paste0(dur_vec[x],'-Day ',per_vec[x],'th Percentile'),zlim=c(min(brick_fraction@data@min),max(brick_fraction@data@max)));plot(border,col='transparent', border='black',add=TRUE)})
+
+# Alternative visualizations of the plot
+# fraction_stack <- stack(datras_fraction[[1]],datras_fraction[[2]],datras_fraction[[3]],datras_fraction[[4]],datras_fraction[[5]],datras_fraction[[6]],datras_fraction[[7]],datras_fraction[[8]],datras_fraction[[9]])
+# thenames <- sapply(1:9, function (x) {paste0(dur_vec[x],'-Day ',per_vec[x],'th Percentile')})
+# myTheme <- BuRdTheme()
+# levelplot(fraction_stack,names.attr=thenames,par.settings=myTheme)
+# 
+# myTheme <- rasterTheme(region = c( "#6371AF", "#959CC3","#E2E6BD" ,"#E5D961" , "#E9B62D" ,"#EAA428" # blue to yellow to red
+#                                   ,"#E89132"  ,"#E06B50" ,"#D33F6A"))
+# myTheme$panel.background$col = 'gray97' # NA values
+# my.at <- seq(-100,100,20)
+# my.labels <- paste0(seq(-100,100,20),'%')
+# p.strip <- list(cex=0.8, lines=1, font=2) # subplot titles
+# myColorkey <- list(at=my.at, ## where the colors change
+#                    labels=list(
+#                      labels=my.labels, # label names
+#                      at=my.at, ## where to print labels
+#                      cex=0.6, font=2),
+#                    height=0.85, width=1.4)
+# levelplot(fraction_stack,par.settings=myTheme,names.attr=thenames,
+#           par.strip.text=p.strip,
+#           scales=list(draw=FALSE),
+#           at=my.at, colorkey=myColorkey, fontface=2, asp=1)
+```
+
+```{r Spatial dynamics, eval=F}
+par(mfrow=c(1,1),oma=c(1,1,1,2))
+test <- focal(datras_1stperiod[[1]],w = matrix(1/9, ncol=3, nrow=3), fun = sd, na.rm=T,NAonly=F)
+# test4 <- focal(datras_1stperiod[[1]],w = matrix(1/9, ncol=3, nrow=3), fun = sd, na.rm=F,NAonly=F)
+# test3 <- focal(datras_1stperiod[[1]],w = matrix(1/9, ncol=3, nrow=3), fun = sd,NAonly=T) # NAonly seems to be a gap filling meethod
+plot(datras_1stperiod[[1]],main='Number of events 1979-1998');plot(border,col='transparent', border='black',add=TRUE)
+plot(datras_2ndperiod[[1]],main='Number of events 1999-2018');plot(border,col='transparent', border='black',add=TRUE)
+test <- mask(test,ocean,inverse=T)
+plot(test, main='Standard deviation of neighboring pixels');plot(border,col='transparent', border='black',add=TRUE)
+# plot(test4);plot(border,col='transparent', border='black',add=TRUE)
+# plot(test3)
+test2 <- corLocal(datras_1stperiod[[1]],datras_2ndperiod[[1]],nbg=c(3,3))
+test2 <- mask(test2,ocean,inverse=T)
+plot(test2, main='Pearson correlation of the two time spans (1979-1998, 1999-2018',cex.main=0.8);plot(border,col='transparent', border='black',add=TRUE)
+# ich glaube, dass man für focal und corLocal hier einfach zu viele Edge-Effekte hat, ich denke es ist daher nicht so sinnhaft
+```
+
+```{r Basic calculations, fig.height=10, fig.width=10}
+
+# aggregate Percent area in compound event of all pixels for each day using "events_per_time"
+# area_size <- length(na.omit(datras_1stperiod[[1]]@data@values))
+area_size <- length(which(Koeppen@data@values==1))
+events_per_time2 <- array(events_per_time,dim=c(dim(events_per_time)[1],9))# dim: pixels, heat wave cases
+events_per_pixel <- sapply(1:9,function(y){sapply(1:years, function (x) {sum(events_per_time2[(vecyears[x]:(vecyears[x+1]-1)),y])/area_size})}) # total yearly sum of compound events for all 9 cases, divided by total area
+locat <- which(Koeppen@data@values==1)
+events_per_pixel_alt <- pbsapply(locat,function(y){sapply(1:years, function (x) {sum(event_series[y,(vecyears[x]:(vecyears[x+1]-1)),2,2])})}) # total yearly sum of compound events for 5-days 90th percentile (calculated from event_series not events_per_time as above to get sd)
+events_per_pixel_mean <- apply(events_per_pixel_alt,1,mean)
+events_per_pixel_sd <- apply(events_per_pixel_alt,1,sd)
+
+# p_area <- events_per_time2/area_size # indiviudal events
+# Fn_per1 <- apply(p_area[1:sum(rep(summer,20)),],2,ecdf) # period 1979-1998
+# Fn_per2 <- apply(p_area[(dim(events_per_time)[1]-sum(rep(summer,20))):dim(events_per_time)[1],],2,ecdf) # period 1999-2018
+# plot.ecdf(p_area[,1],col="brown"); plot.ecdf(p_area[,2],add=T,col="green")
+# Fn <- apply(p_area,2,ecdf)
+# summary(Fn)
+# plot.ecdf(Fn[[1]]);plot.ecdf(Fn[[2]])
+# knots(Fn[[1]]);knots(Fn[[2]]) # knots of ecdf
+# View(environment(Fn_per1[[1]])[["x"]]) same as knots
+```
+
+## The empirical CDF of drought and heatwave concurrences from 1979-1998 (blue) and 1999-2018 (red)
+```{r cdfs, fig.height=10, fig.width=10}
+par(mfrow=c(3,3),oma=c(1,1,3,1))
+
+a <- sapply(1:9, function (x) {plot.ecdf(events_per_pixel[21:years,x],verticals=T,col="green",main=paste0(dur_vec[x],'-Day ',per_vec[x],'th Percentile'),ylab='Cumulative probability',xlab='Mean yearly number of compound events per pixel'); plot.ecdf(events_per_pixel[1:20,x],verticals=T,add=T,col="brown");legend('bottomright',legend=c('1979-1998','1999-2018'),col=c("brown","green"),lwd=2,cex=0.9)}) # aggregated for each year
+mtext('Yearly aggregations of concurrences', outer = TRUE, cex = 1.5)
+```
+
+## Boxplots
+```{r boxplots, fig.height=10, fig.width=10}
+par(mfrow=c(3,3),oma=c(1,1,3,1))
+
+a <- sapply(1:9, function (x) {boxplot(events_per_pixel[1:20,x],events_per_pixel[21:40,x],ylab='Mean yearly number of compound events per pixel',main=paste0(dur_vec[x],'-Day ',per_vec[x],'th Percentile'),col='lightblue')})
+mtext('Mean yearly number of compound events per pixel', outer = TRUE, cex = 1.5)
+
+par(mfrow=c(1,1))
+boxplot(events_per_pixel[1:40,],ylab='Mean yearly number of compound events per pixel',col='lightblue',names=(c("3-Day \n 85th Perc.","3-Day \n 90th Perc.","3-Day \n 95th Perc.","5-Day \n 85th Perc.","5-Day \n 90th Perc.","5-Day \n 95th Perc.","7-Day \n 85th \n Perc.","7-Day \n 90th Perc.","7-Day \n 95th Perc."))) # Fig. S4 in Mazdiyasni & AghaKouchak 2015
+mtext('Mean yearly number of compound events per pixel', outer = TRUE, cex = 1.5)
+```
+
+## Mean yearly number of compound heat waves and droughts per pixels over time
+```{r time series plots, fig.height=10, fig.width=10}
+par(mfrow=c(3,3),oma=c(1,1,5,1))
+# a <- sapply(1:9, function (x) {plot(events_per_time2[1:sum(rep(summer,20)),x],type='l',xlab="days",ylab="Pixel counts",col="brown");lines(events_per_time2[(dim(events_per_time)[1]-sum(rep(summer,20))+1):dim(events_per_time)[1],x],col="blue")}) # Fig. S3
+# scatter.smooth(events_per_time2[,9], col="#CCCCCC")
+# means_all_years <- sapply(1:9,function(y){sapply(1:years, function (x) {mean(events_per_time2[(vecyears[x]:(vecyears[x+1]-1)),y])})}) # average yearly number of events for all 9 cases
+
+# a <- sapply(1:9,function(x){plot(events_per_pixel[21:years,x],type='l',col='green',ylab='Mean yearly fraction of area under compound events'); lines(events_per_pixel[1:20,x],col='red')}) # Both time periods
+# # the shape of the graphs is almost identical and only the scale (y-axis) differs (decreases). So, the 9 cases are extremely
+# # high correleated, the number just decreases (as expected) with longer durations and higher thresholds
+# # Fig. S3
+# mtext('Fraction of area of the Mediterranean with compound events over time \n for first (1979-1998) and second period (1999-2018) (Fig. S3)', outer = TRUE, cex = 1.5)
+
+allyears <- 1979:2018
+placements <- 1:40
+a <- sapply(1:9,function(x){plot(events_per_pixel[,x],type='l',lwd=2,col='green',ylab='Mean yearly number of compound events per pixel',xaxt="n");axis(1,at=placements,labels=allyears)}) # 1979-2018
+mtext('Mean yearly number of compound events per pixel over time for the entire period', outer = TRUE, cex = 1.5)
+
+par(mfrow=c(3,1))
+a <- sapply(c(0,3,6),function(x){plot(events_per_pixel[,1+x],type='l',lwd=2,col='red',ylab='Mean yearly number of compound events per pixel',xaxt="n",ylim=c(0,max(events_per_pixel[,1+x])));axis(1,at=placements,labels=allyears);lines(events_per_pixel[,2+x],col='green');lines(events_per_pixel[,3+x],col='blue')}) # 1979-2018, Fig. 3
+# mtext('Fraction of area of the Mediterranean with compound events \n over time for the entire period like in the paper (Fig. 3)', outer = TRUE, cex = 1.5)
+mtext('Average yearly number of compound events per pixel from 1979-2018', outer = TRUE, cex = 1.5)
+
+# par(mfrow=c(3,3))
+# placements <- seq(1,40*184,184)
+# # placements <- c(1,cumsum(year_lengths[1:39]))
+# a <- sapply(1:9, function (x) {plot(events_per_time2[,x],type='h',xlab="days",ylab="Pixel counts",col="brown",xaxt="n");
+#   axis(1,at=placements,labels=allyears)}) # 1979 - 2018 (Fig. 3)
+# mtext('Number of events for the entire period', outer = TRUE, cex = 1.5)
+```
+
+```{r Monthly plots, fig.height=10, fig.width=10, eval=T}
+# Initialisation
+end_dates_month <- cumsum(month_lengths) # last day of each month
+
+# warm season
+# create vector with month for each date of the 40 year period
+# months_40years <- rep(c("05_May","06_Jun","07_Jul","08_Aug","09_Sep","10_Oct"),40)
+# start_dates_month <- c(1,end_dates_month[1:239]+1) # first day of each month
+# month_vect <- vector(mode='character',length=7360)
+# end_dates_year <- cumsum(rep(184,40)[1:years])
+# year_vect <- vector(mode='character',length=7360)
+# for (i in 1:240) {month_vect[start_dates_month[i]:end_dates_month[i]] <- months_40years[i]}
+# plotwindow <- c(2,3)
+
+# whole season
+# create vector with month for each date of the 40 year period
+months_40years <- rep(c("01_Jan","02_Feb","03_Mar","04_Apr","05_May","06_Jun","07_Jul","08_Aug","09_Sep","10_Oct","11_Nov","12_Dec"),40)
+start_dates_month <- c(1,end_dates_month[1:479]+1) # first day of each month
+month_vect <- vector(mode='character',length=14610)
+end_dates_year <- cumsum(rep(c(365,366,365,365),10)[1:years])
+year_vect <- vector(mode='character',length=14610)
+for (i in 1:480) {month_vect[start_dates_month[i]:end_dates_month[i]] <- months_40years[i]}
+plotwindow <- c(3,4)
+
+
+start_dates_year <- c(1,end_dates_year[1:39]+1)
+for (i in 1:40) {year_vect[start_dates_year[i]:end_dates_year[i]] <- allyears[i]}
+
+
+
+# Aggregated event time series for each month
+events_90_5 <- events_per_time[,2,2] # 90th percentile, 5 days
+events_90_5_1st_period <- events_per_time[1:(length(year_vect)/2),2,2]
+events_90_5_2nd_period <- events_per_time[(length(year_vect)/2+1):length(year_vect),2,2]
+
+events_and_dates <- data.frame('Data'= events_90_5,'Month' = month_vect,'Year'= year_vect) # add info about month and year for each time step
+
+
+
+# Average number of events per year per pixel per month: sum of all months divided by area
+event_per_pixel_whole_time_all_months <- tapply(X = events_and_dates[,1],INDEX = events_and_dates[,2],FUN = sum) / area_size / years
+event_per_pixel_whole_time_all_months_1stP <- tapply(X = events_and_dates[1:(length(year_vect)/2),1],INDEX = events_and_dates[1:(length(year_vect)/2),2],FUN = sum) / area_size/(years/2)
+event_per_pixel_whole_time_all_months_2ndP <- tapply(X = events_and_dates[(length(year_vect)/2+1):length(year_vect),1],INDEX = events_and_dates[(length(year_vect)/2+1):length(year_vect),2],FUN = sum) / area_size/(years/2)
+
+events_month <- t(tapply(events_and_dates$Data, list(events_and_dates$Month, events_and_dates$Year),sum)/area_size)
+# png(filename="D:/user/vogelj/compound_events_mediterran/Output/correlation_matrix_monthly.png")
+  ggcorrplot(cor(events_month))
+# dev.off()
+# corrplot(cor(events_month))
+
+colors <- rainbow(12)
+slopes <- vector(mode="numeric",length=length(unique(months_40years)))
+plot(x=1979:2018,y=seq(0,2,length.out=40),type='n',xlab="Years",ylab="Average number of events per pixel")
+for (i in c(1:length(unique(months_40years)))){
+  curr_month <- filter(events_and_dates, Month == months_40years[i])
+  sum_curr_month <- tapply(curr_month$Data,curr_month$Year,sum)/area_size
+  lines(x=1979:2018,y=sum_curr_month,col=colors[i])
+  lm_curr_month <- lm(sum_curr_month~c(1979:2018))
+  slopes[i] <- lm_curr_month$coefficients[2]
+  abline(lm_curr_month,col=colors[i])
+}
+
+# Average number of events per pixel per month for each year: time series of sum of all months divided by area
+month_names <- unique(months_40years)
+month_names2 <- rep(month_names,each=2)
+month_names2[seq(1,length(month_names2)-1,by=2)] <- paste(month_names2[seq(1,length(month_names2)-1,by=2)],"1st period")
+month_names2[seq(2,length(month_names2),by=2)] <- paste(month_names2[seq(2,length(month_names2),by=2)],"2nd period")
+events_sorted_monthly <- lapply(1:length(month_names),function(x){filter(events_and_dates, Month == month_names[x])})
+
+events_per_pixel_yearly_all_months <- lapply(1:length(month_names),function(x){tapply(events_sorted_monthly[[x]]$Data,events_sorted_monthly[[x]]$Year,sum)/area_size}) # Sums for each year and each month
+# Average number of events for all years per pixel for each month
+# bilde für jedes Jahr die Summe des entsprechenden Monats
+a <- lapply(1:length(month_names),function(x){plot(1979:2018,events_per_pixel_yearly_all_months[[x]],type='l',main=month_names[x]);lm_month <- lm(events_per_pixel_yearly_all_months[[x]]~c(1979:2018));abline(lm_month,col='blue')})
+
+
+# Comparison of both periods
+plot(event_per_pixel_whole_time_all_months,col='purple',ylim=c(0,max(event_per_pixel_whole_time_all_months_2ndP)),xlab="Months",ylab="Average number of events per pixel from 1979 to 2018 for each month")
+points(event_per_pixel_whole_time_all_months_1stP,col='green')
+points(event_per_pixel_whole_time_all_months_2ndP,col='blue')
+legend('topleft',legend=c('1979-2018','1979-1998','1999-2018'),col=c('purple',"green","blue"),lwd=2,cex=0.8)
+plot(event_per_pixel_whole_time_all_months_2ndP/event_per_pixel_whole_time_all_months_1stP,xlab="Months",ylab="Percentage change of average number of events per pixel between 1979-1998 and 1999-2018") # change from first to second period
+barplot(slopes*years,xlab="Months",ylab="Change of number of events per pixel from 1979 to 2018 for each month",names=month_names) # Slope over the 40 years for each month
+# results are counterintuitive: you would expect more compound events in summer (in general) due to higher feedbacks; on the other hand change is highest in summer, maybe due to increasing feedbacks
+# there seems to be a lot of stochasticity in there (look at months 6 to 8)
+
+
+
+# Distribution of events of all years for each month
+yearly_events_all_months <- unlist(events_per_pixel_yearly_all_months)
+yearly_events_all_months <- matrix(yearly_events_all_months,nrow=40,ncol=length(month_names))
+# reshape it, so that the first period and second period are in a column next to each other for all months
+yearly_events_all_months_both_periods <- matrix(yearly_events_all_months,nrow=20,ncol=2*length(month_names))
+boxplot(yearly_events_all_months,xlab="Months", ylab="Distribution of events from 1979-2018 for each month",names=month_names)
+par(mfrow=c(1,1),oma=c(5,1,1,1))
+boxplot(yearly_events_all_months_both_periods, ylab="Distribution of events from 1979-1998 and 1999-2018 for each month",names=month_names2,las=2)
+# yearly distribution of events per pixel for each month for entire period 
+# boxplots <- tapply(X = events_and_dates[,1],INDEX = events_and_dates[,2],FUN = boxplot) 
+
+
+# Spatial plots for each  month
+# locat <- which(Koeppen@data@values==1)
+# event_series_90_5  <- data.frame('Data'= t(event_series[locat,,2,2]),'Month' = month_vect,'Year'= year_vect) # add column with dates
+event_series_90_5  <- data.frame('Data'= t(event_series[,,2,2]),'Month' = month_vect,'Year'= year_vect) # add column with dates
+all_months <- lapply(1:length(month_names),function(x){filter(event_series_90_5, Month == month_names[x])})
+
+# (sum_2nd_period-sum_1stperiod)/sum_whole_period for all pixels
+fraction_per_pixel <- lapply(1:length(month_names),function(x){(apply(all_months[[x]][(dim(all_months[[x]])[1]/2+1):dim(all_months[[x]])[1],1:length(coord[,1])],2,sum) - apply(all_months[[x]][1:(dim(all_months[[x]])[1]/2),1:length(coord[,1])],2,sum)) / apply(all_months[[x]][,1:length(coord[,1])],2,sum)})
+# sum(is.nan(test7[[4]])): many pixels without events outside the Mediterranean
+
+# attach coordinates
+dat_fraction_per_pixel <-  lapply(1:length(month_names),function(x){cbind(coord,fraction_per_pixel[[x]])})
+# convert to raster
+datras_fraction_per_pixel <-  lapply(dat_fraction_per_pixel,rasterFromXYZ)
+# transform lists to bricks (easier to handle)
+brick_fraction_per_pixel <-  brick(datras_fraction_per_pixel)
+
+par(mfrow=plotwindow)
+a <-  lapply(1:length(month_names),function(x){plot(datras_fraction_per_pixel [[x]],zlim=c(min(brick_fraction_per_pixel@data@min),max(brick_fraction_per_pixel@data@max)),main=month_names[x]);plot(border,col='transparent', border='black',add=TRUE)})
+
+
+# Compare it for warm season and whole season and compare it to singular events: so far only in separate scripts possible, no direct comparison in one script
+```
+
+## Mann-Kendall test
+```{r Mann-Kendall, fig.height=10, fig.width=10}
+print('Mann Kendall test for yearly aggregated events')
+sapply(1:9, function (x) {MannKendall(events_per_pixel[,x])})
+
+# event_series2 <- array(event,dim=c(length(coord[,1]),sum(month_lengths),9)) # reshape 
+# mann-kendall is probably wrong for binomial time series, use (negative) binomial or poisson regression, but you have to account for autocorrelation
+# mk <- sapply(locat, function (x) {MannKendall(event_series2[x,,1])})
+# mk_s <- sapply(1:1950, function (x) {mk[,x]$sl[1]})
+
+# Mann-Kendall test modified to account for autocorrelation
+print('Modified Mann-Kendall test for serially correlated data for yearly aggregated events')
+sapply(1:9, function (x) mmkh(events_per_pixel[,x])) # no big difference between old and new p-value
+sapply(1:9, function (x) mmkh3lag(events_per_pixel[,x])) # no big difference between old and new p-value
+```
+
+## Cramer-von Mises test on fraction of area under compound events ####
+```{r CVM, eval=T, fig.height=10, fig.width=10}
+par(mfrow=c(3,3))
+
+# Change point detection
+dcpb <- lapply(1:9,function (x) {detectChangePointBatch(events_per_pixel[,x], cpmType = 'Cramer-von-Mises',alpha=0.05)})
+print('Cramér-von Mises test for mean yearly number of compound heat waves and droughts per pixel for the entire period')
+a <- sapply(1:9,function(x){plot(dcpb[[x]]$Ds,lwd=2,xaxt="n",type='l');abline(v=dcpb[[x]]$changePoint,lwd=3,col="red");
+  axis(1,at=c(1:40),labels=allyears)}) # most likely location of the change point, defined as the value of k which maximized D_kt
+
+# Test for significant differences betweend both time spans (1979-1998; 1999-2018)
+print('Cramér-von Mises test for yearly fraction of area under compound heat waves and drought for both periods')
+# twosamp_cvm <-lapply(1:9, function (x) {CvM.test(events_per_pixel[1:20,x],events_per_pixel[21:40,x])}) # at submission stage
+# Revision
+twosamp_cvm <-lapply(1:9, function (x) {cramer.test(events_per_pixel[1:20,x],events_per_pixel[21:40,x])})
+twosamp_cvm
+```
+
+## Kolmogorov-Smirnov test
+```{r KS, eval=T}
+## Kolmogorov-Smirnov test
+print('Kolmogorov-Smirnov test for mean yearly number of compound heat waves and droughts per pixel')
+# events_per_pixel_alt <- sapply(1:9, function (x) {events_per_pixel[,x] + rnorm(40,0,0.0001)}) # ggf. add noise to avoid ties (results virtually don't change)
+# events_per_pixel_alt <- sapply(1:9, function (x) {jitter(events_per_pixel)})
+kstest_yearly <- lapply(1:9, function (x) {ks.test(events_per_pixel[1:20,x],events_per_pixel[21:40,x])})
+lapply(1:9,function(x){kstest_yearly[[x]]})
+```
+
+## ACF
+```{r ACF, eval=T, fig.height=10, fig.width=10}
+par(mfrow=c(3,3),oma=c(1,1,3,1))
+# Autocorrelation ####
+a <- lapply(1:9,function(x){acf(events_per_pixel[,x])})
+mtext('ACF for the mean yearly number of compound heat waves and droughts per pixel', outer = TRUE, cex = 1.5)
+
+end <- Sys.time()
+end-start
+toc() # Statistics
+toc() # Total
+```
